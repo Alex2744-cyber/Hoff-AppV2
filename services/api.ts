@@ -1,4 +1,3 @@
-import { Platform } from 'react-native';
 
 // Configurar URL base según el entorno
 const getBaseUrl = () => {
@@ -15,7 +14,7 @@ const getBaseUrl = () => {
     // }
   }
   // En producción
-  return 'https://tu-servidor.com/api';
+  return 'mysql-production-c9ed.up.railway.app';
 };
 
 const API_URL = getBaseUrl();
