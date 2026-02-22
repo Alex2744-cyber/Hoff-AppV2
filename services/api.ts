@@ -13,8 +13,8 @@ const getBaseUrl = () => {
     //   return 'http://localhost:3000/api';  // iOS Simulator
     // }
   }
-  // En producción
-  return 'hoff-backend-production.up.railway.app';
+  // En producción (Railway)
+  return 'https://hoff-backend-production.up.railway.app/api';
 };
 
 const API_URL = getBaseUrl();
