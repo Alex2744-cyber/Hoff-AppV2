@@ -14,7 +14,7 @@ const getBaseUrl = () => {
     // }
   }
   // En producción
-  return 'mysql-production-c9ed.up.railway.app';
+  return 'hoff-backend-production.up.railway.app';
 };
 
 const API_URL = getBaseUrl();
