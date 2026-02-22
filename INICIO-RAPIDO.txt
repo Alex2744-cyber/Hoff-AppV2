@@ -1,0 +1,169 @@
+╔══════════════════════════════════════════════════════════════════╗
+║                                                                  ║
+║         🔐 SISTEMA DE LOGIN - CLEANING APP                      ║
+║         ✅ COMPLETAMENTE FUNCIONAL                               ║
+║                                                                  ║
+╚══════════════════════════════════════════════════════════════════╝
+
+📋 LO QUE SE HA CREADO:
+
+✅ Servicio API completo (services/api.ts)
+✅ Context de autenticación (contexts/AuthContext.tsx)
+✅ Pantalla de login (app/auth/login.tsx)
+✅ Dashboard de administrador (app/admin/dashboard.tsx)
+✅ Dashboard de trabajador (app/worker/dashboard.tsx)
+✅ Navegación protegida actualizada
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🚀 INICIO RÁPIDO (3 PASOS):
+
+1️⃣  INICIAR EL BACKEND:
+    
+    cd C:\Users\Sebas\Desktop\cleaning-app-backend
+    npm start
+    
+    ✓ Debe estar en: http://localhost:3000
+
+2️⃣  INICIAR LA APP:
+    
+    cd C:\Users\Sebas\Desktop\HoffApp\cleaning-app
+    npm start
+    
+    Luego presiona:
+    - 'a' para Android
+    - 'i' para iOS
+    - 'w' para Web
+
+3️⃣  INICIAR SESIÓN:
+    
+    Administrador:
+    👤 Usuario: admin
+    🔑 Contraseña: admin123
+    
+    Trabajador:
+    👤 Usuario: jperez
+    🔑 Contraseña: worker123
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📱 QUÉ VERÁS EN CADA DASHBOARD:
+
+🔵 DASHBOARD ADMINISTRADOR:
+   📊 Estadísticas generales del sistema
+   📋 TODAS las tareas (7 tareas de ejemplo)
+   👷 Lista de 5 trabajadores activos
+   👥 Lista de 5 clientes
+   🔄 Pull to refresh
+
+🟢 DASHBOARD TRABAJADOR:
+   📊 Estadísticas personales
+   📋 Solo SUS tareas asignadas
+   ✅ Sus tareas completadas
+   ⏱️  Total de horas trabajadas
+   🔄 Pull to refresh
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✨ FUNCIONALIDADES:
+
+✅ Login con validación de credenciales
+✅ Sesión persistente (se mantiene al cerrar la app)
+✅ Redirección automática según tipo de usuario
+✅ Dashboards diferenciados por rol
+✅ Datos reales desde MySQL
+✅ Pull to refresh para actualizar datos
+✅ Logout con confirmación
+✅ Protección de rutas por rol
+✅ Manejo de errores
+✅ Estados de carga
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎨 DATOS QUE SE MUESTRAN:
+
+ADMIN ve de cada tarea:
+  • Cliente
+  • Dirección completa
+  • Fecha de realización
+  • Estado (pendiente/asignada/completada)
+  • Trabajadores asignados
+  • Valor del servicio
+  • Horas estimadas/trabajadas
+
+TRABAJADOR ve de cada tarea:
+  • Cliente
+  • Dirección completa
+  • Fecha de realización
+  • Estado
+  • Horas estimadas
+  • Valor del servicio
+  • Botón "Ver Detalles"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🧪 CREDENCIALES DE PRUEBA:
+
+Admin:
+  admin / admin123
+
+Trabajadores:
+  jperez     / worker123  → Juan Pérez (2 tareas)
+  alopez     / worker123  → Ana López (2 tareas)
+  mgarcia    / worker123  → Miguel García (1 tarea)
+  lmartinez  / worker123  → Laura Martínez (1 tarea)
+  rdiaz      / worker123  → Roberto Díaz (1 tarea)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📝 ARCHIVOS IMPORTANTES:
+
+services/api.ts               → Conexión con backend
+contexts/AuthContext.tsx      → Manejo de autenticación
+app/auth/login.tsx           → Pantalla de login
+app/admin/dashboard.tsx      → Dashboard admin
+app/worker/dashboard.tsx     → Dashboard trabajador
+app/_layout.tsx              → Navegación y rutas protegidas
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+⚠️  IMPORTANTE PARA ANDROID EMULATOR:
+
+El API se configura automáticamente para usar:
+  • Android: http://10.0.2.2:3000/api
+  • iOS: http://localhost:3000/api
+
+Si usas un dispositivo físico, edita services/api.ts
+y cambia a la IP de tu PC (ej: 192.168.1.10:3000)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+📚 DOCUMENTACIÓN COMPLETA:
+
+Ver archivo: LOGIN-README.md
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+🎯 FLUJO COMPLETO:
+
+1. Usuario abre la app
+2. Ve pantalla de login
+3. Selecciona tipo (Admin o Trabajador)
+4. Ingresa credenciales
+5. App consulta backend en localhost:3000
+6. Backend valida contra MySQL
+7. Si es correcto, guarda sesión
+8. Redirige a dashboard correspondiente
+9. Dashboard carga datos desde backend
+10. Usuario puede cerrar sesión
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+✅ SISTEMA 100% FUNCIONAL
+
+Backend ✅    MySQL ✅    App ✅    Login ✅    Dashboards ✅
+
+¡Todo listo para usar y seguir desarrollando! 🎉
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
