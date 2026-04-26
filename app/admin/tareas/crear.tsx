@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -11,68 +11,23 @@ import {
   Modal,
   FlatList,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { Calendar } from 'react-native-calendars';
-import { useAuth } from '../../../contexts/AuthContext';
 import api from '../../../services/api';
+import { HoffColors } from '@/constants/theme';
+import { taskSpacing, taskRadius, taskShadowCard } from '@/constants/taskUi';
+import { TaskScreenContainer, TaskSearchField } from '@/components/tareas';
+import { ClienteAvatar } from '@/components/clientes/ClienteAvatar';
 
-// Funciones de conversión entre formato tiempo (HH:MM) y decimal
-const tiempoADecimal = (tiempo: string): number => {
-  if (!tiempo || !tiempo.trim()) return 0;
-  
-  // Si no tiene formato de tiempo, intentar parsear como decimal (retrocompatibilidad)
-  if (!tiempo.includes(':')) {
-    const decimal = parseFloat(tiempo);
-    return isNaN(decimal) ? 0 : decimal;
-  }
-  
-  const partes = tiempo.split(':');
-  if (partes.length !== 2) return 0;
-  
-  const horas = parseInt(partes[0], 10);
-  const minutos = parseInt(partes[1], 10);
-  
-  if (isNaN(horas) || isNaN(minutos)) return 0;
-  
-  return horas + (minutos / 60);
-};
-
-const decimalATiempo = (decimal: number): string => {
-  if (!decimal || isNaN(decimal) || decimal < 0) return '0:00';
-  
-  const horas = Math.floor(decimal);
-  const minutos = Math.round((decimal - horas) * 60);
-  
-  // Asegurar que minutos no excedan 59
-  const horasFinal = horas + Math.floor(minutos / 60);
-  const minutosFinal = minutos % 60;
-  
-  return `${horasFinal}:${minutosFinal.toString().padStart(2, '0')}`;
-};
-
-const validarFormatoTiempo = (tiempo: string): boolean => {
-  if (!tiempo || !tiempo.trim()) return true; // Vacío es válido (opcional)
-  
-  // Permitir formato decimal también (retrocompatibilidad)
-  if (!tiempo.includes(':')) {
-    const decimal = parseFloat(tiempo);
-    return !isNaN(decimal) && decimal >= 0;
-  }
-  
-  // Validar formato HH:MM
-  const regex = /^(\d{1,2}):([0-5]?\d)$/;
-  if (!regex.test(tiempo)) return false;
-  
-  const [horas, minutos] = tiempo.split(':').map(Number);
-  return horas >= 0 && horas < 1000 && minutos >= 0 && minutos < 60;
-};
+function matchesQuery(text: string, query: string): boolean {
+  if (!query.trim()) return true;
+  return (text || '').toLowerCase().includes(query.trim().toLowerCase());
+}
 
 interface TrabajadorSeleccionado {
   id: number;
   nombre: string;
-  horas?: string;
-  horasNum?: number;
-  minutosNum?: number;
 }
 
 // Componente de selector de tiempo deslizable
@@ -134,15 +89,21 @@ const TimePicker: React.FC<TimePickerProps> = ({
     });
   }, [minutos, itemHeight]);
 
+  const slotTop = wrapperHeight / 2 - itemHeight / 2;
+
   return (
     <View style={styles.timePickerContainer}>
       <View style={styles.timePickerColumn}>
         <Text style={styles.timePickerLabel}>Horas</Text>
-        <View 
+        <View
           style={[styles.timePickerWrapper, { height: wrapperHeight, width: wrapperWidth }]}
           onStartShouldSetResponder={() => true}
           onMoveShouldSetResponder={() => true}
         >
+          <View
+            pointerEvents="none"
+            style={[styles.timePickerSlotHighlight, { top: slotTop, height: itemHeight }]}
+          />
           <ScrollView
             ref={horasScrollRef}
             style={styles.timePickerScroll}
@@ -186,11 +147,15 @@ const TimePicker: React.FC<TimePickerProps> = ({
       
       <View style={styles.timePickerColumn}>
         <Text style={styles.timePickerLabel}>Minutos</Text>
-        <View 
+        <View
           style={[styles.timePickerWrapper, { height: wrapperHeight, width: wrapperWidth }]}
           onStartShouldSetResponder={() => true}
           onMoveShouldSetResponder={() => true}
         >
+          <View
+            pointerEvents="none"
+            style={[styles.timePickerSlotHighlight, { top: slotTop, height: itemHeight }]}
+          />
           <ScrollView
             ref={minutosScrollRef}
             style={styles.timePickerScroll}
@@ -237,8 +202,7 @@ const TimePicker: React.FC<TimePickerProps> = ({
 
 export default function CrearTareaScreen() {
   const router = useRouter();
-  const { user } = useAuth();
-  
+
   // Estados del formulario
   const [clienteId, setClienteId] = useState<number | null>(null);
   const [direccionId, setDireccionId] = useState<number | null>(null);
@@ -251,7 +215,11 @@ export default function CrearTareaScreen() {
   const [horasEstimadas, setHorasEstimadas] = useState<number>(0);
   const [minutosEstimados, setMinutosEstimados] = useState<number>(0);
   const [valorServicio, setValorServicio] = useState<string>('');
-  
+
+  const [clienteSearch, setClienteSearch] = useState('');
+  const [direccionSearch, setDireccionSearch] = useState('');
+  const [trabajadorSearch, setTrabajadorSearch] = useState('');
+
   // Estados para trabajadores
   const [trabajadoresSeleccionados, setTrabajadoresSeleccionados] = useState<TrabajadorSeleccionado[]>([]);
   const [showTrabajadoresModal, setShowTrabajadoresModal] = useState(false);
@@ -266,10 +234,26 @@ export default function CrearTareaScreen() {
   const [loadingDirecciones, setLoadingDirecciones] = useState(false);
   const [saving, setSaving] = useState(false);
   
-  // Estados para modales de tiempo
   const [showTimePickerModal, setShowTimePickerModal] = useState(false);
-  const [showTrabajadorTimeModal, setShowTrabajadorTimeModal] = useState(false);
-  const [trabajadorTimeModalId, setTrabajadorTimeModalId] = useState<number | null>(null);
+
+  const clientesFiltrados = useMemo(() => {
+    return clientes.filter((c) => {
+      const nombre = c.nombre ?? '';
+      const tipoLabel = c.tipo === 'empresa' ? 'empresa' : 'particular';
+      return matchesQuery(nombre, clienteSearch) || matchesQuery(tipoLabel, clienteSearch);
+    });
+  }, [clientes, clienteSearch]);
+
+  const direccionesFiltradas = useMemo(() => {
+    return direcciones.filter((d) => {
+      const line = `${d.direccion_completa ?? ''} ${d.ciudad ?? ''}`;
+      return matchesQuery(line, direccionSearch);
+    });
+  }, [direcciones, direccionSearch]);
+
+  const trabajadoresFiltrados = useMemo(() => {
+    return trabajadores.filter((t) => matchesQuery(t.nombre ?? '', trabajadorSearch));
+  }, [trabajadores, trabajadorSearch]);
 
   useEffect(() => {
     loadData();
@@ -285,6 +269,18 @@ export default function CrearTareaScreen() {
     }
   }, [clienteId]);
 
+  useEffect(() => {
+    if (!showClienteModal) setClienteSearch('');
+  }, [showClienteModal]);
+
+  useEffect(() => {
+    if (!showDireccionModal) setDireccionSearch('');
+  }, [showDireccionModal]);
+
+  useEffect(() => {
+    if (!showTrabajadoresModal) setTrabajadorSearch('');
+  }, [showTrabajadoresModal]);
+
   const loadData = async () => {
     try {
       setLoading(true);
@@ -293,8 +289,8 @@ export default function CrearTareaScreen() {
         api.getTrabajadores(),
       ]);
       
-      if (clientesRes.success) setClientes(clientesRes.data);
-      if (trabajadoresRes.success) setTrabajadores(trabajadoresRes.data);
+      if (clientesRes.success) setClientes(clientesRes.data ?? []);
+      if (trabajadoresRes.success) setTrabajadores(trabajadoresRes.data ?? []);
     } catch (error: any) {
       Alert.alert('Error', 'No se pudieron cargar los datos');
     } finally {
@@ -306,7 +302,7 @@ export default function CrearTareaScreen() {
     try {
       setLoadingDirecciones(true);
       const response = await api.getDireccionesByCliente(clienteId);
-      if (response.success) {
+      if (response.success && response.data) {
         setDirecciones(response.data);
         // Si solo hay una dirección, seleccionarla automáticamente
         if (response.data.length === 1) {
@@ -322,41 +318,11 @@ export default function CrearTareaScreen() {
 
   const toggleTrabajador = (trabajador: any) => {
     const exists = trabajadoresSeleccionados.find(t => t.id === trabajador.id);
-    
     if (exists) {
-      // Deseleccionar
       setTrabajadoresSeleccionados(prev => prev.filter(t => t.id !== trabajador.id));
     } else {
-      // Seleccionar y prellenar horas si hay horas estimadas
-      const horasDefault = (horasEstimadas > 0 || minutosEstimados > 0)
-        ? `${horasEstimadas}:${minutosEstimados.toString().padStart(2, '0')}`
-        : '';
-      setTrabajadoresSeleccionados(prev => [...prev, {
-        id: trabajador.id,
-        nombre: trabajador.nombre,
-        horas: horasDefault,
-        horasNum: horasEstimadas,
-        minutosNum: minutosEstimados
-      }]);
+      setTrabajadoresSeleccionados(prev => [...prev, { id: trabajador.id, nombre: trabajador.nombre }]);
     }
-  };
-
-  const updateHorasTrabajador = (trabajadorId: number, horas: number, minutos: number) => {
-    const tiempo = `${horas}:${minutos.toString().padStart(2, '0')}`;
-    setTrabajadoresSeleccionados(prev => prev.map(t => 
-      t.id === trabajadorId 
-        ? { ...t, horas: tiempo, horasNum: horas, minutosNum: minutos }
-        : t
-    ));
-  };
-
-  const validarHoras = (horas: number, minutos: number): boolean => {
-    if (horasEstimadas === 0 && minutosEstimados === 0) return true;
-    
-    const totalMinutosTrabajador = horas * 60 + minutos;
-    const totalMinutosEstimados = horasEstimadas * 60 + minutosEstimados;
-    
-    return totalMinutosTrabajador <= totalMinutosEstimados;
   };
 
   const handleSubmit = async () => {
@@ -369,22 +335,6 @@ export default function CrearTareaScreen() {
     if (isNaN(parseFloat(valorServicio)) || parseFloat(valorServicio) <= 0) {
       Alert.alert('Error', 'El valor del servicio debe ser un número mayor a 0');
       return;
-    }
-
-    // Validar horas individuales
-    if (horasEstimadas > 0 || minutosEstimados > 0) {
-      for (const trabajador of trabajadoresSeleccionados) {
-        if (trabajador.horasNum !== undefined && trabajador.minutosNum !== undefined) {
-          if (!validarHoras(trabajador.horasNum, trabajador.minutosNum)) {
-            const tiempoMax = `${horasEstimadas}:${minutosEstimados.toString().padStart(2, '0')}`;
-            Alert.alert(
-              'Error',
-              `Las horas de ${trabajador.nombre} no pueden superar ${tiempoMax}`
-            );
-            return;
-          }
-        }
-      }
     }
 
     setSaving(true);
@@ -413,26 +363,10 @@ export default function CrearTareaScreen() {
       if (response.success) {
         const tareaId = response.data.id;
 
-        // 2. Asignar trabajadores con horas individuales
+        // 2. Asignar trabajadores: el backend usa numero_horas de la tarea como horas_asignadas por trabajador
         if (trabajadoresSeleccionados.length > 0) {
           for (const trabajador of trabajadoresSeleccionados) {
-            let horasAsignadas: number | undefined;
-            
-            if (trabajador.horasNum !== undefined && trabajador.minutosNum !== undefined) {
-              // Usar horas y minutos del trabajador
-              horasAsignadas = trabajador.horasNum + (trabajador.minutosNum / 60);
-            } else if (horasEstimadas > 0 || minutosEstimados > 0) {
-              // Usar horas estimadas por defecto
-              horasAsignadas = horasEstimadas + (minutosEstimados / 60);
-            }
-
-            if (horasAsignadas !== undefined) {
-              await api.asignarTrabajador(
-                tareaId,
-                trabajador.id,
-                horasAsignadas
-              );
-            }
+            await api.asignarTrabajador(tareaId, trabajador.id);
           }
         }
 
@@ -452,17 +386,19 @@ export default function CrearTareaScreen() {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#2196F3" />
+        <ActivityIndicator size="large" color={HoffColors.primary} />
         <Text style={styles.loadingText}>Cargando datos...</Text>
       </View>
     );
   }
 
   return (
+    <TaskScreenContainer bottomInsetExtra={40}>
     <ScrollView 
-      style={styles.container} 
+      style={{ flex: 1 }} 
       contentContainerStyle={styles.content}
       nestedScrollEnabled={true}
+      keyboardShouldPersistTaps="handled"
     >
       {/* Cliente */}
       <View style={styles.card}>
@@ -476,7 +412,7 @@ export default function CrearTareaScreen() {
               ? clientes.find(c => c.id === clienteId)?.nombre || 'Selecciona un cliente'
               : 'Selecciona un cliente'}
           </Text>
-          <Text style={styles.selectButtonArrow}>▼</Text>
+          <Ionicons name="chevron-down" size={20} color={HoffColors.textSecondary} />
         </TouchableOpacity>
       </View>
 
@@ -486,7 +422,7 @@ export default function CrearTareaScreen() {
         {!clienteId ? (
           <Text style={styles.helperText}>Primero selecciona un cliente</Text>
         ) : loadingDirecciones ? (
-          <ActivityIndicator size="small" color="#2196F3" style={styles.loadingInline} />
+          <ActivityIndicator size="small" color={HoffColors.primary} style={styles.loadingInline} />
         ) : direcciones.length === 0 ? (
           <Text style={styles.helperText}>Este cliente no tiene direcciones registradas</Text>
         ) : (
@@ -499,7 +435,7 @@ export default function CrearTareaScreen() {
                 ? direcciones.find(d => d.id === direccionId)?.direccion_completa || 'Selecciona una dirección'
                 : 'Selecciona una dirección'}
             </Text>
-            <Text style={styles.selectButtonArrow}>▼</Text>
+            <Ionicons name="chevron-down" size={20} color={HoffColors.textSecondary} />
           </TouchableOpacity>
         )}
       </View>
@@ -539,14 +475,14 @@ export default function CrearTareaScreen() {
                 markedDates={{
                   [fechaRealizacion.toISOString().split('T')[0]]: {
                     selected: true,
-                    selectedColor: '#2196F3',
+                    selectedColor: HoffColors.primary,
                     selectedTextColor: '#fff'
                   }
                 }}
                 theme={{
-                  todayTextColor: '#2196F3',
-                  arrowColor: '#2196F3',
-                  selectedDayBackgroundColor: '#2196F3',
+                  todayTextColor: HoffColors.primary,
+                  arrowColor: HoffColors.primary,
+                  selectedDayBackgroundColor: HoffColors.primary,
                   selectedDayTextColor: '#fff',
                   textDayFontWeight: '500',
                   textMonthFontWeight: 'bold',
@@ -608,10 +544,10 @@ export default function CrearTareaScreen() {
               ? `${horasEstimadas}:${minutosEstimados.toString().padStart(2, '0')}`
               : '0:00'}
           </Text>
-          <Text style={styles.timeDisplayArrow}>▼</Text>
+          <Ionicons name="chevron-down" size={20} color={HoffColors.textSecondary} />
         </TouchableOpacity>
         <Text style={styles.helperText}>
-          Si se especifica, se usará como valor por defecto para todos los trabajadores asignados
+          Duración total del servicio. Cada trabajador que asignes recibirá esta misma duración en sus horas asignadas (puedes ajustarlas después en el detalle de la tarea).
         </Text>
       </View>
 
@@ -634,6 +570,7 @@ export default function CrearTareaScreen() {
           style={styles.trabajadoresButton}
           onPress={() => setShowTrabajadoresModal(true)}
         >
+          <Ionicons name="people-outline" size={22} color={HoffColors.primary} style={styles.trabajadoresButtonIcon} />
           <Text style={styles.trabajadoresButtonText}>
             {trabajadoresSeleccionados.length > 0
               ? `${trabajadoresSeleccionados.length} trabajador(es) seleccionado(s)`
@@ -656,14 +593,14 @@ export default function CrearTareaScreen() {
           disabled={saving}
         >
           {saving ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={HoffColors.white} />
           ) : (
             <Text style={styles.submitButtonText}>Crear Tarea</Text>
           )}
         </TouchableOpacity>
       </View>
 
-      {/* Modal de trabajadores - Pantalla completa */}
+      {/* Modal de trabajadores */}
       <Modal
         visible={showTrabajadoresModal}
         animationType="slide"
@@ -671,68 +608,57 @@ export default function CrearTareaScreen() {
       >
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Seleccionar Trabajadores</Text>
+            <Text style={styles.modalTitle}>Seleccionar trabajadores</Text>
             <TouchableOpacity
               style={styles.modalCloseButton}
               onPress={() => setShowTrabajadoresModal(false)}
+              accessibilityLabel="Cerrar"
             >
-              <Text style={styles.modalCloseText}>Cerrar</Text>
+              <Ionicons name="close" size={28} color={HoffColors.textSecondary} />
             </TouchableOpacity>
           </View>
-
+          <View style={styles.modalSearchWrap}>
+            <TaskSearchField
+              placeholder="Buscar por nombre..."
+              value={trabajadorSearch}
+              onChangeText={setTrabajadorSearch}
+              autoCorrect={false}
+            />
+          </View>
           <FlatList
-            data={trabajadores}
+            data={trabajadoresFiltrados}
             keyExtractor={(item) => item.id.toString()}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.modalListContent}
             renderItem={({ item }) => {
               const isSelected = trabajadoresSeleccionados.some(t => t.id === item.id);
-              const trabajadorSeleccionado = trabajadoresSeleccionados.find(t => t.id === item.id);
-              const horasTrabajador = trabajadorSeleccionado?.horasNum ?? horasEstimadas;
-              const minutosTrabajador = trabajadorSeleccionado?.minutosNum ?? minutosEstimados;
-              
               return (
-                <View style={styles.trabajadorItem}>
-                  <TouchableOpacity
-                    style={styles.trabajadorCheckbox}
-                    onPress={() => toggleTrabajador(item)}
-                  >
-                    <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
-                      {isSelected && <Text style={styles.checkmark}>✓</Text>}
+                <TouchableOpacity
+                  style={[styles.trabajadorRow, isSelected && styles.trabajadorRowSelected]}
+                  onPress={() => toggleTrabajador(item)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.trabajadorRowLeft}>
+                    <View style={styles.trabajadorIconCircle}>
+                      <Ionicons name="person-outline" size={20} color={HoffColors.primary} />
                     </View>
                     <Text style={styles.trabajadorNombre}>{item.nombre}</Text>
-                  </TouchableOpacity>
-                  
-                  {isSelected && (
-                    <View style={styles.horasPickerContainer}>
-                      <Text style={styles.horasLabel}>Horas individuales:</Text>
-                      <TouchableOpacity
-                        style={styles.timeDisplayButtonSmall}
-                        onPress={() => {
-                          setTrabajadorTimeModalId(item.id);
-                          setShowTrabajadorTimeModal(true);
-                        }}
-                      >
-                        <Text style={styles.timeDisplayTextSmall}>
-                          {horasTrabajador > 0 || minutosTrabajador > 0
-                            ? `${horasTrabajador}:${minutosTrabajador.toString().padStart(2, '0')}`
-                            : horasEstimadas > 0 || minutosEstimados > 0
-                            ? `${horasEstimadas}:${minutosEstimados.toString().padStart(2, '0')}`
-                            : '0:00'}
-                        </Text>
-                        <Text style={styles.timeDisplayArrowSmall}>▼</Text>
-                      </TouchableOpacity>
-                      {(horasEstimadas > 0 || minutosEstimados > 0) && (
-                        <Text style={styles.horasMaxText}>
-                          Máximo: {horasEstimadas}:{minutosEstimados.toString().padStart(2, '0')}
-                        </Text>
-                      )}
-                    </View>
-                  )}
-                </View>
+                  </View>
+                  <Ionicons
+                    name={isSelected ? 'checkmark-circle' : 'ellipse-outline'}
+                    size={26}
+                    color={isSelected ? HoffColors.primary : HoffColors.border}
+                  />
+                </TouchableOpacity>
               );
             }}
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>No hay trabajadores disponibles</Text>
+                <Text style={styles.emptyText}>
+                  {trabajadores.length === 0
+                    ? 'No hay trabajadores disponibles'
+                    : 'Ningún resultado para tu búsqueda'}
+                </Text>
               </View>
             }
           />
@@ -747,34 +673,59 @@ export default function CrearTareaScreen() {
       >
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Seleccionar Cliente</Text>
+            <Text style={styles.modalTitle}>Seleccionar cliente</Text>
             <TouchableOpacity
               style={styles.modalCloseButton}
               onPress={() => setShowClienteModal(false)}
+              accessibilityLabel="Cerrar"
             >
-              <Text style={styles.modalCloseText}>Cerrar</Text>
+              <Ionicons name="close" size={28} color={HoffColors.textSecondary} />
             </TouchableOpacity>
           </View>
+          <View style={styles.modalSearchWrap}>
+            <TaskSearchField
+              placeholder="Buscar cliente o tipo..."
+              value={clienteSearch}
+              onChangeText={setClienteSearch}
+              autoCorrect={false}
+            />
+          </View>
           <FlatList
-            data={clientes}
+            data={clientesFiltrados}
             keyExtractor={(item) => item.id.toString()}
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={[
-                  styles.modalItem,
-                  clienteId === item.id && styles.modalItemSelected
-                ]}
-                onPress={() => {
-                  setClienteId(item.id);
-                  setShowClienteModal(false);
-                }}
-              >
-                <Text style={styles.modalItemText}>
-                  {item.nombre} ({item.tipo === 'empresa' ? 'Empresa' : 'Particular'})
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.modalListContent}
+            renderItem={({ item }) => {
+              const empresa = item.tipo === 'empresa';
+              return (
+                <TouchableOpacity
+                  style={[styles.clienteRow, clienteId === item.id && styles.modalItemSelected]}
+                  onPress={() => {
+                    setClienteId(item.id);
+                    setShowClienteModal(false);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <ClienteAvatar nombre={item.nombre} fotoUri={item.foto_perfil} size={44} />
+                  <View style={styles.clienteTextCol}>
+                    <Text style={styles.clienteNombre}>{item.nombre}</Text>
+                    <Text style={styles.clienteTipo}>{empresa ? 'Empresa' : 'Particular'}</Text>
+                  </View>
+                  {clienteId === item.id ? (
+                    <Ionicons name="checkmark-circle" size={24} color={HoffColors.primary} />
+                  ) : (
+                    <Ionicons name="chevron-forward" size={22} color={HoffColors.textMuted} />
+                  )}
+                </TouchableOpacity>
+              );
+            }}
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>
+                  {clientes.length === 0 ? 'No hay clientes' : 'Ningún resultado para tu búsqueda'}
                 </Text>
-                {clienteId === item.id && <Text style={styles.modalItemCheck}>✓</Text>}
-              </TouchableOpacity>
-            )}
+              </View>
+            }
           />
         </View>
       </Modal>
@@ -787,34 +738,58 @@ export default function CrearTareaScreen() {
       >
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Seleccionar Dirección</Text>
+            <Text style={styles.modalTitle}>Seleccionar dirección</Text>
             <TouchableOpacity
               style={styles.modalCloseButton}
               onPress={() => setShowDireccionModal(false)}
+              accessibilityLabel="Cerrar"
             >
-              <Text style={styles.modalCloseText}>Cerrar</Text>
+              <Ionicons name="close" size={28} color={HoffColors.textSecondary} />
             </TouchableOpacity>
           </View>
+          <View style={styles.modalSearchWrap}>
+            <TaskSearchField
+              placeholder="Buscar dirección o ciudad..."
+              value={direccionSearch}
+              onChangeText={setDireccionSearch}
+              autoCorrect={false}
+            />
+          </View>
           <FlatList
-            data={direcciones}
+            data={direccionesFiltradas}
             keyExtractor={(item) => item.id.toString()}
+            keyboardShouldPersistTaps="handled"
+            contentContainerStyle={styles.modalListContent}
             renderItem={({ item }) => (
               <TouchableOpacity
-                style={[
-                  styles.modalItem,
-                  direccionId === item.id && styles.modalItemSelected
-                ]}
+                style={[styles.direccionRow, direccionId === item.id && styles.modalItemSelected]}
                 onPress={() => {
                   setDireccionId(item.id);
                   setShowDireccionModal(false);
                 }}
+                activeOpacity={0.7}
               >
-                <Text style={styles.modalItemText}>
-                  {item.direccion_completa}, {item.ciudad}
-                </Text>
-                {direccionId === item.id && <Text style={styles.modalItemCheck}>✓</Text>}
+                <View style={styles.clienteIconCircle}>
+                  <Ionicons name="location-outline" size={22} color={HoffColors.primary} />
+                </View>
+                <View style={styles.clienteTextCol}>
+                  <Text style={styles.clienteNombre}>{item.direccion_completa}</Text>
+                  <Text style={styles.clienteTipo}>{item.ciudad}</Text>
+                </View>
+                {direccionId === item.id ? (
+                  <Ionicons name="checkmark-circle" size={24} color={HoffColors.primary} />
+                ) : (
+                  <Ionicons name="chevron-forward" size={22} color={HoffColors.textMuted} />
+                )}
               </TouchableOpacity>
             )}
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>
+                  {direcciones.length === 0 ? 'Sin direcciones' : 'Ningún resultado para tu búsqueda'}
+                </Text>
+              </View>
+            }
           />
         </View>
       </Modal>
@@ -836,7 +811,8 @@ export default function CrearTareaScreen() {
             onStartShouldSetResponder={() => true}
             onMoveShouldSetResponder={() => true}
           >
-            <Text style={styles.timeModalTitle}>Seleccionar Horas Estimadas</Text>
+            <Text style={styles.timeModalTitle}>Horas estimadas</Text>
+            <Text style={styles.timeModalHint}>Desliza o pulsa el valor en el centro</Text>
             <TimePicker
               horas={horasEstimadas}
               minutos={minutosEstimados}
@@ -862,91 +838,14 @@ export default function CrearTareaScreen() {
           </View>
         </TouchableOpacity>
       </Modal>
-
-      {/* Modal de horas individuales de trabajador */}
-      <Modal
-        visible={showTrabajadorTimeModal}
-        transparent={true}
-        animationType="fade"
-        onRequestClose={() => {
-          setShowTrabajadorTimeModal(false);
-          setTrabajadorTimeModalId(null);
-        }}
-      >
-        <TouchableOpacity
-          style={styles.timeModalOverlay}
-          activeOpacity={1}
-          onPress={() => {
-            setShowTrabajadorTimeModal(false);
-            setTrabajadorTimeModalId(null);
-          }}
-        >
-          <View 
-            style={styles.timeModalContent}
-            onStartShouldSetResponder={() => true}
-            onMoveShouldSetResponder={() => true}
-          >
-            <Text style={styles.timeModalTitle}>
-              Horas de {trabajadores.find(t => t.id === trabajadorTimeModalId)?.nombre || 'Trabajador'}
-            </Text>
-            {trabajadorTimeModalId !== null && (() => {
-              const trabajadorSeleccionado = trabajadoresSeleccionados.find(t => t.id === trabajadorTimeModalId);
-              const horasTrab = trabajadorSeleccionado?.horasNum ?? horasEstimadas;
-              const minutosTrab = trabajadorSeleccionado?.minutosNum ?? minutosEstimados;
-              
-              return (
-                <>
-                  <TimePicker
-                    horas={horasTrab}
-                    minutos={minutosTrab}
-                    onHorasChange={(h) => updateHorasTrabajador(trabajadorTimeModalId, h, minutosTrab)}
-                    onMinutosChange={(m) => updateHorasTrabajador(trabajadorTimeModalId, horasTrab, m)}
-                    maxHoras={horasEstimadas}
-                    maxMinutos={minutosEstimados}
-                    size="large"
-                  />
-                  {(horasEstimadas > 0 || minutosEstimados > 0) && (
-                    <Text style={styles.timeModalMaxText}>
-                      Máximo: {horasEstimadas}:{minutosEstimados.toString().padStart(2, '0')}
-                    </Text>
-                  )}
-                </>
-              );
-            })()}
-            <View style={styles.timeModalActions}>
-              <TouchableOpacity
-                style={styles.timeModalCancelButton}
-                onPress={() => {
-                  setShowTrabajadorTimeModal(false);
-                  setTrabajadorTimeModalId(null);
-                }}
-              >
-                <Text style={styles.timeModalCancelText}>Cancelar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.timeModalConfirmButton}
-                onPress={() => {
-                  setShowTrabajadorTimeModal(false);
-                  setTrabajadorTimeModalId(null);
-                }}
-              >
-                <Text style={styles.timeModalConfirmText}>Aceptar</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </TouchableOpacity>
-      </Modal>
     </ScrollView>
+    </TaskScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
   content: {
-    padding: 16,
+    paddingBottom: taskSpacing.lg,
   },
   loadingContainer: {
     flex: 1,
@@ -954,33 +853,31 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   loadingText: {
-    marginTop: 12,
+    marginTop: taskSpacing.md,
     fontSize: 16,
-    color: '#666',
+    color: HoffColors.textSecondary,
   },
   loadingInline: {
     marginVertical: 12,
   },
   card: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    backgroundColor: HoffColors.surface,
+    borderRadius: taskRadius.lg,
+    padding: taskSpacing.lg,
+    marginBottom: taskSpacing.lg,
+    borderWidth: 1,
+    borderColor: HoffColors.border,
+    ...taskShadowCard,
   },
   label: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+    color: HoffColors.text,
     marginBottom: 8,
   },
   helperText: {
     fontSize: 12,
-    color: '#666',
+    color: HoffColors.textSecondary,
     fontStyle: 'italic',
     marginTop: 4,
   },
@@ -989,61 +886,63 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
+    borderColor: HoffColors.border,
+    borderRadius: taskRadius.md,
     padding: 14,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: HoffColors.background,
   },
   selectButtonText: {
     fontSize: 16,
-    color: '#333',
+    color: HoffColors.text,
     flex: 1,
-  },
-  selectButtonArrow: {
-    fontSize: 12,
-    color: '#666',
-    marginLeft: 8,
   },
   dateButton: {
     borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
+    borderColor: HoffColors.border,
+    borderRadius: taskRadius.md,
     padding: 14,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: HoffColors.background,
   },
   dateText: {
     fontSize: 16,
-    color: '#333',
+    color: HoffColors.text,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
+    borderColor: HoffColors.border,
+    borderRadius: taskRadius.md,
     padding: 12,
     fontSize: 16,
-    backgroundColor: '#fff',
+    backgroundColor: HoffColors.surface,
   },
   textArea: {
     borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
+    borderColor: HoffColors.border,
+    borderRadius: taskRadius.md,
     padding: 12,
     fontSize: 16,
-    backgroundColor: '#fff',
+    backgroundColor: HoffColors.surface,
     minHeight: 100,
   },
   trabajadoresButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#2196F3',
-    borderRadius: 8,
+    borderColor: HoffColors.primary,
+    borderRadius: taskRadius.md,
     padding: 14,
-    backgroundColor: '#E3F2FD',
+    backgroundColor: HoffColors.secondaryMuted,
+  },
+  trabajadoresButtonIcon: {
+    marginRight: 8,
   },
   trabajadoresButtonText: {
     fontSize: 16,
-    color: '#2196F3',
+    color: HoffColors.primary,
     fontWeight: '600',
     textAlign: 'center',
+    flex: 1,
   },
   actionsContainer: {
     flexDirection: 'row',
@@ -1053,19 +952,21 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: HoffColors.background,
     padding: 16,
     borderRadius: 12,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: HoffColors.border,
   },
   cancelButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#666',
+    color: HoffColors.textSecondary,
   },
   submitButton: {
     flex: 1,
-    backgroundColor: '#2196F3',
+    backgroundColor: HoffColors.primary,
     padding: 16,
     borderRadius: 12,
     alignItems: 'center',
@@ -1076,123 +977,130 @@ const styles = StyleSheet.create({
   submitButtonText: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#fff',
+    color: HoffColors.white,
   },
   modalContainer: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: HoffColors.background,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: taskSpacing.lg,
+    paddingVertical: taskSpacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: '#e0e0e0',
-    backgroundColor: '#f9f9f9',
+    borderBottomColor: HoffColors.border,
+    backgroundColor: HoffColors.surface,
   },
   modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
+    fontSize: 18,
+    fontWeight: '700',
+    color: HoffColors.primary,
+    flex: 1,
   },
   modalCloseButton: {
-    padding: 8,
+    padding: 4,
   },
-  modalCloseText: {
-    fontSize: 16,
-    color: '#2196F3',
-    fontWeight: '600',
-  },
-  trabajadorItem: {
-    padding: 16,
+  modalSearchWrap: {
+    paddingHorizontal: taskSpacing.lg,
+    paddingVertical: taskSpacing.md,
+    backgroundColor: HoffColors.surface,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: HoffColors.border,
   },
-  trabajadorCheckbox: {
+  modalListContent: {
+    paddingBottom: taskSpacing.xl,
+  },
+  trabajadorRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: taskSpacing.md,
+    paddingHorizontal: taskSpacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: HoffColors.border,
+    backgroundColor: HoffColors.surface,
   },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderWidth: 2,
-    borderColor: '#2196F3',
-    borderRadius: 4,
-    marginRight: 12,
-    justifyContent: 'center',
+  trabajadorRowSelected: {
+    backgroundColor: HoffColors.secondaryMuted,
+  },
+  trabajadorRowLeft: {
+    flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+    gap: taskSpacing.md,
   },
-  checkboxSelected: {
-    backgroundColor: '#2196F3',
-  },
-  checkmark: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: 'bold',
+  trabajadorIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: HoffColors.secondaryMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   trabajadorNombre: {
     fontSize: 16,
-    color: '#333',
+    color: HoffColors.text,
     flex: 1,
+    fontWeight: '500',
   },
-  horasPickerContainer: {
-    marginTop: 12,
-    marginLeft: 36,
+  clienteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: taskSpacing.md,
+    paddingHorizontal: taskSpacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: HoffColors.border,
+    backgroundColor: HoffColors.surface,
+    gap: taskSpacing.md,
   },
-  horasLabel: {
-    fontSize: 14,
-    color: '#666',
-    marginBottom: 8,
+  direccionRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: taskSpacing.md,
+    paddingHorizontal: taskSpacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: HoffColors.border,
+    backgroundColor: HoffColors.surface,
+    gap: taskSpacing.md,
+  },
+  clienteIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: HoffColors.secondaryMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  clienteTextCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  clienteNombre: {
+    fontSize: 16,
     fontWeight: '600',
+    color: HoffColors.text,
   },
-  horasMaxText: {
-    fontSize: 12,
-    color: '#666',
-    marginTop: 8,
-    fontStyle: 'italic',
-    textAlign: 'center',
+  clienteTipo: {
+    marginTop: 2,
+    fontSize: 13,
+    color: HoffColors.textSecondary,
   },
   timeDisplayButton: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
+    borderColor: HoffColors.border,
+    borderRadius: taskRadius.md,
     padding: 14,
-    backgroundColor: '#f9f9f9',
+    backgroundColor: HoffColors.background,
   },
   timeDisplayText: {
     fontSize: 18,
-    color: '#333',
+    color: HoffColors.text,
     fontWeight: '600',
-  },
-  timeDisplayArrow: {
-    fontSize: 12,
-    color: '#666',
-    marginLeft: 8,
-  },
-  timeDisplayButtonSmall: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 6,
-    padding: 10,
-    backgroundColor: '#f9f9f9',
-    width: 120,
-  },
-  timeDisplayTextSmall: {
-    fontSize: 16,
-    color: '#333',
-    fontWeight: '600',
-  },
-  timeDisplayArrowSmall: {
-    fontSize: 10,
-    color: '#666',
-    marginLeft: 4,
   },
   timeModalOverlay: {
     flex: 1,
@@ -1201,86 +1109,97 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   timeModalContent: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 24,
+    backgroundColor: HoffColors.surface,
+    borderRadius: taskRadius.lg,
+    padding: taskSpacing.lg,
     width: '90%',
     maxWidth: 400,
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 8,
+    borderWidth: 1,
+    borderColor: HoffColors.border,
+    ...taskShadowCard,
   },
   timeModalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    marginBottom: 20,
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 4,
     textAlign: 'center',
-    color: '#333',
+    color: HoffColors.primary,
   },
-  timeModalMaxText: {
-    fontSize: 14,
-    color: '#666',
-    marginTop: 12,
-    fontStyle: 'italic',
+  timeModalHint: {
+    fontSize: 13,
+    color: HoffColors.textSecondary,
+    marginBottom: 8,
     textAlign: 'center',
   },
   timeModalActions: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     width: '100%',
-    marginTop: 24,
+    marginTop: taskSpacing.lg,
     gap: 12,
   },
   timeModalCancelButton: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: HoffColors.background,
     padding: 14,
-    borderRadius: 8,
+    borderRadius: taskRadius.md,
     borderWidth: 1,
-    borderColor: '#e0e0e0',
+    borderColor: HoffColors.border,
     alignItems: 'center',
   },
   timeModalCancelText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#666',
+    color: HoffColors.textSecondary,
   },
   timeModalConfirmButton: {
     flex: 1,
-    backgroundColor: '#2196F3',
+    backgroundColor: HoffColors.primary,
     padding: 14,
-    borderRadius: 8,
+    borderRadius: taskRadius.md,
     alignItems: 'center',
   },
   timeModalConfirmText: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#fff',
+    color: HoffColors.white,
   },
   timePickerContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     marginVertical: 16,
+    width: '100%',
   },
   timePickerColumn: {
     alignItems: 'center',
     flex: 1,
   },
   timePickerLabel: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
-    color: '#666',
+    color: HoffColors.textSecondary,
     marginBottom: 8,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
   timePickerWrapper: {
     borderWidth: 1,
-    borderColor: '#e0e0e0',
-    borderRadius: 8,
-    backgroundColor: '#f9f9f9',
+    borderColor: HoffColors.border,
+    borderRadius: taskRadius.md,
+    backgroundColor: HoffColors.background,
     overflow: 'hidden',
+    position: 'relative',
+  },
+  timePickerSlotHighlight: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 1,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: HoffColors.primary,
+    backgroundColor: 'rgba(10, 66, 50, 0.06)',
   },
   timePickerScroll: {
     flex: 1,
@@ -1289,16 +1208,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: 12,
+    zIndex: 2,
   },
   timePickerItemSelected: {
-    backgroundColor: '#E3F2FD',
+    backgroundColor: 'transparent',
   },
   timePickerItemDisabled: {
     opacity: 0.3,
   },
   timePickerItemText: {
     fontSize: 16,
-    color: '#666',
+    color: HoffColors.textSecondary,
   },
   timePickerItemTextLarge: {
     fontSize: 18,
@@ -1306,39 +1226,22 @@ const styles = StyleSheet.create({
   timePickerItemTextSelected: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#2196F3',
+    color: HoffColors.primary,
   },
   timePickerItemTextDisabled: {
-    color: '#ccc',
+    color: HoffColors.textMuted,
   },
   emptyContainer: {
     padding: 40,
     alignItems: 'center',
   },
   emptyText: {
-    fontSize: 16,
-    color: '#999',
-  },
-  modalItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    fontSize: 15,
+    color: HoffColors.textMuted,
+    textAlign: 'center',
   },
   modalItemSelected: {
-    backgroundColor: '#E3F2FD',
-  },
-  modalItemText: {
-    fontSize: 16,
-    color: '#333',
-    flex: 1,
-  },
-  modalItemCheck: {
-    fontSize: 20,
-    color: '#2196F3',
-    fontWeight: 'bold',
+    backgroundColor: HoffColors.secondaryMuted,
   },
   dateModalOverlay: {
     flex: 1,
@@ -1347,7 +1250,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   dateModalContent: {
-    backgroundColor: '#fff',
+    backgroundColor: HoffColors.surface,
     borderRadius: 16,
     padding: 20,
     width: '95%',
@@ -1358,10 +1261,10 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     marginBottom: 16,
     textAlign: 'center',
-    color: '#333',
+    color: HoffColors.text,
   },
   dateModalButton: {
-    backgroundColor: '#2196F3',
+    backgroundColor: HoffColors.primary,
     padding: 14,
     borderRadius: 8,
     alignItems: 'center',

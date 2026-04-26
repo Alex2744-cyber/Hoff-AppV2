@@ -1,77 +1,79 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { HoffColors } from '@/constants/theme';
+import { taskSpacing } from '@/constants/taskUi';
+import { TaskScreenContainer, TaskHubLinkRow } from '@/components/tareas';
 
 export default function TareasMenuScreen() {
   const router = useRouter();
 
   return (
-    <View style={styles.container}>
-      <View style={styles.buttonsContainer}>
-        <TouchableOpacity
-          style={styles.button}
-          onPress={() => router.push('/admin/tareas/crear')}
-        >
-          <Text style={styles.buttonText}>Crear</Text>
-        </TouchableOpacity>
+    <TaskScreenContainer>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.header}>
+          <Text style={styles.heading}>Tareas</Text>
+          <Text style={styles.lead}>Gestiona órdenes de trabajo, seguimiento y cierre.</Text>
+        </View>
 
-        <TouchableOpacity
-          style={styles.button}
-          onPress={() => router.push('/admin/tareas/lista')}
-        >
-          <Text style={styles.buttonText}>Ver</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.button, styles.buttonSecondary]}
-          onPress={() => router.push('/admin/tareas/completadas')}
-        >
-          <Text style={styles.buttonText}>Completadas</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.button, styles.buttonSuccess]}
-          onPress={() => router.push('/admin/tareas/realizados')}
-        >
-          <Text style={styles.buttonText}>Trabajos Realizados</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+        <View style={styles.list}>
+          <TaskHubLinkRow
+            title="Crear tarea"
+            subtitle="Registrar una nueva orden para el equipo"
+            icon="add-circle-outline"
+            emphasize
+            onPress={() => router.push('/admin/tareas/crear')}
+          />
+          <TaskHubLinkRow
+            title="Ver tareas"
+            subtitle="Listado, filtros y detalle"
+            icon="list-outline"
+            onPress={() => router.push('/admin/tareas/lista')}
+          />
+          <TaskHubLinkRow
+            title="Completadas"
+            subtitle="Tareas marcadas como hechas, pendientes de aprobar"
+            icon="hourglass-outline"
+            onPress={() => router.push('/admin/tareas/completadas')}
+          />
+          <TaskHubLinkRow
+            title="Trabajos realizados"
+            subtitle="Historial aprobado y contabilizado"
+            icon="checkmark-done-outline"
+            onPress={() => router.push('/admin/tareas/realizados')}
+          />
+        </View>
+      </ScrollView>
+    </TaskScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: HoffColors.surface,
+  scrollContent: {
+    flexGrow: 1,
+    paddingTop: taskSpacing.sm,
+    paddingBottom: taskSpacing.xl,
   },
-  buttonsContainer: {
-    flex: 1,
-    flexDirection: 'column',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 16,
-    paddingHorizontal: 40,
+  header: {
+    marginBottom: taskSpacing.xl,
   },
-  button: {
-    backgroundColor: HoffColors.primary,
-    paddingVertical: 16,
-    paddingHorizontal: 40,
-    borderRadius: 12,
-    minWidth: 120,
-    alignItems: 'center',
+  heading: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: HoffColors.primary,
+    letterSpacing: -0.3,
   },
-  buttonText: {
-    color: HoffColors.white,
-    fontSize: 18,
-    fontWeight: '600',
+  lead: {
+    marginTop: taskSpacing.sm,
+    fontSize: 15,
+    lineHeight: 22,
+    color: HoffColors.textSecondary,
   },
-  buttonSecondary: {
-    backgroundColor: HoffColors.accent,
-  },
-  buttonSuccess: {
-    backgroundColor: HoffColors.primary,
+  list: {
+    gap: taskSpacing.md,
   },
 });
-

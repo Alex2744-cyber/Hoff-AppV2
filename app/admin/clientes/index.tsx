@@ -6,7 +6,6 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  TextInput,
   RefreshControl,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -14,6 +13,27 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import api from '../../../services/api';
 import { HoffColors } from '@/constants/theme';
+import {
+  taskContentMaxWidth,
+  taskSpacing,
+  taskRadius,
+  taskShadowCard,
+  taskToolbarStrip,
+  taskToolbarColumn,
+  taskFilterChipStyles,
+} from '@/constants/taskUi';
+import { TaskSearchField } from '@/components/tareas/TaskSearchField';
+import { ClienteAvatar } from '@/components/clientes/ClienteAvatar';
+
+function clienteDisplayName(cliente: {
+  tipo: string;
+  nombre: string;
+  nombre_empresa?: string | null;
+}) {
+  return cliente.tipo === 'empresa'
+    ? (cliente.nombre_empresa || cliente.nombre || '').trim() || '—'
+    : (cliente.nombre || '').trim() || '—';
+}
 
 export default function ClientesScreen() {
   const router = useRouter();
@@ -38,9 +58,9 @@ export default function ClientesScreen() {
       setLoading(true);
       const response = await api.getClientes();
       if (response.success) {
-        setClientes(response.data);
+        setClientes(response.data ?? []);
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error cargando clientes:', error);
     } finally {
       setLoading(false);
@@ -53,9 +73,17 @@ export default function ClientesScreen() {
     loadClientes();
   };
 
+  const q = searchQuery.toLowerCase().trim();
+
   const filteredClientes = clientes.filter((cliente) => {
-    const matchesSearch = cliente.nombre.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                         (cliente.email && cliente.email.toLowerCase().includes(searchQuery.toLowerCase()));
+    const display = clienteDisplayName(cliente).toLowerCase();
+    const matchesSearch =
+      !q ||
+      display.includes(q) ||
+      (cliente.email && String(cliente.email).toLowerCase().includes(q)) ||
+      (cliente.telefono && String(cliente.telefono).toLowerCase().includes(q)) ||
+      (cliente.administrador_nombre &&
+        String(cliente.administrador_nombre).toLowerCase().includes(q));
     const matchesFilter = filterTipo === 'todos' || cliente.tipo === filterTipo;
     return matchesSearch && matchesFilter;
   });
@@ -79,121 +107,161 @@ export default function ClientesScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Barra de búsqueda y filtros */}
-      <View style={styles.searchContainer}>
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Buscar cliente..."
-          value={searchQuery}
-          onChangeText={setSearchQuery}
-          placeholderTextColor={HoffColors.textMuted}
-        />
-      </View>
-
-      {/* Filtros por tipo */}
-      <View style={styles.filtersContainer}>
-        <TouchableOpacity
-          style={[styles.filterTab, filterTipo === 'todos' && styles.filterTabActive]}
-          onPress={() => setFilterTipo('todos')}
-        >
-          <Text style={[styles.filterTabText, filterTipo === 'todos' && styles.filterTabTextActive]}>
-            Todos ({clientes.length})
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.filterTab, filterTipo === 'empresa' && styles.filterTabActive]}
-          onPress={() => setFilterTipo('empresa')}
-        >
-          <Text style={[styles.filterTabText, filterTipo === 'empresa' && styles.filterTabTextActive]}>
-            Empresas ({clientes.filter(c => c.tipo === 'empresa').length})
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.filterTab, filterTipo === 'particular' && styles.filterTabActive]}
-          onPress={() => setFilterTipo('particular')}
-        >
-          <Text style={[styles.filterTabText, filterTipo === 'particular' && styles.filterTabTextActive]}>
-            Particulares ({clientes.filter(c => c.tipo === 'particular').length})
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Lista de clientes */}
-      <ScrollView
-        style={styles.listContainer}
-        contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-      >
-        {filteredClientes.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>
-              {searchQuery ? 'No se encontraron clientes' : 'No hay clientes registrados'}
-            </Text>
+      <View style={taskToolbarStrip}>
+        <View style={taskToolbarColumn}>
+          <View style={styles.searchWrap}>
+            <TaskSearchField
+              placeholder="Buscar por nombre, email, teléfono…"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
           </View>
-        ) : (
-          filteredClientes.map((cliente) => (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chipsRow}
+          >
             <TouchableOpacity
-              key={cliente.id}
-              style={styles.clienteCard}
-              onPress={() => router.push(`/admin/clientes/editar?id=${cliente.id}`)}
+              style={[
+                taskFilterChipStyles.chip,
+                filterTipo === 'todos' && taskFilterChipStyles.chipActive,
+              ]}
+              onPress={() => setFilterTipo('todos')}
             >
-              <View style={styles.clienteHeader}>
-                <View style={[styles.tipoBadge, { backgroundColor: getTipoColor(cliente.tipo) }]}>
-                  <Ionicons name={getTipoIconName(cliente.tipo)} size={14} color={HoffColors.white} />
-                  <Text style={styles.tipoText}>
-                    {cliente.tipo === 'empresa' ? 'Empresa' : 'Particular'}
-                  </Text>
-                </View>
-              </View>
-              
-              <Text style={styles.clienteNombre}>{cliente.nombre}</Text>
-              
-              {cliente.tipo === 'empresa' && cliente.nombre_empresa && (
-                <Text style={styles.clienteEmpresa}>{cliente.nombre_empresa}</Text>
-              )}
+              <Text
+                style={[
+                  taskFilterChipStyles.chipText,
+                  filterTipo === 'todos' && taskFilterChipStyles.chipTextActive,
+                ]}
+              >
+                Todos ({clientes.length})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                taskFilterChipStyles.chip,
+                filterTipo === 'empresa' && taskFilterChipStyles.chipActive,
+              ]}
+              onPress={() => setFilterTipo('empresa')}
+            >
+              <Text
+                style={[
+                  taskFilterChipStyles.chipText,
+                  filterTipo === 'empresa' && taskFilterChipStyles.chipTextActive,
+                ]}
+              >
+                Empresas ({clientes.filter((c) => c.tipo === 'empresa').length})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                taskFilterChipStyles.chip,
+                filterTipo === 'particular' && taskFilterChipStyles.chipActive,
+              ]}
+              onPress={() => setFilterTipo('particular')}
+            >
+              <Text
+                style={[
+                  taskFilterChipStyles.chipText,
+                  filterTipo === 'particular' && taskFilterChipStyles.chipTextActive,
+                ]}
+              >
+                Particulares ({clientes.filter((c) => c.tipo === 'particular').length})
+              </Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </View>
+      </View>
 
-              {cliente.telefono && (
-                <View style={styles.infoRow}>
-                  <Ionicons name="call-outline" size={16} color={HoffColors.textSecondary} style={styles.infoIcon} />
-                  <Text style={styles.clienteInfo}>{cliente.telefono}</Text>
-                </View>
-              )}
-              
-              {cliente.email && (
-                <View style={styles.infoRow}>
-                  <Ionicons name="mail-outline" size={16} color={HoffColors.textSecondary} style={styles.infoIcon} />
-                  <Text style={styles.clienteInfo}>{cliente.email}</Text>
-                </View>
-              )}
+      <View style={styles.listOuter}>
+        <ScrollView
+          style={styles.listContainer}
+          contentContainerStyle={styles.listContent}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        >
+          {filteredClientes.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>
+                {searchQuery ? 'No se encontraron clientes' : 'No hay clientes registrados'}
+              </Text>
+            </View>
+          ) : (
+            filteredClientes.map((cliente) => {
+              const title = clienteDisplayName(cliente);
+              return (
+                <TouchableOpacity
+                  key={cliente.id}
+                  style={styles.clienteCard}
+                  activeOpacity={0.85}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/admin/clientes/detalle',
+                      params: { id: String(cliente.id) },
+                    })
+                  }
+                  accessibilityRole="button"
+                  accessibilityLabel={`Ver cliente ${title}`}
+                >
+                  <View style={styles.clienteTopRow}>
+                    <ClienteAvatar nombre={title} fotoUri={cliente.foto_perfil} size={48} />
+                    <View style={styles.clienteBody}>
+                      <View style={styles.clienteHeaderRow}>
+                        <View style={[styles.tipoBadge, { backgroundColor: getTipoColor(cliente.tipo) }]}>
+                          <Ionicons name={getTipoIconName(cliente.tipo)} size={14} color={HoffColors.white} />
+                          <Text style={styles.tipoText}>
+                            {cliente.tipo === 'empresa' ? 'Empresa' : 'Particular'}
+                          </Text>
+                        </View>
+                        <Ionicons name="chevron-forward" size={22} color={HoffColors.textMuted} />
+                      </View>
 
-              {cliente.tipo === 'empresa' && cliente.administrador_nombre && (
-                <View style={styles.administradorContainer}>
-                  <View style={[styles.infoRow, styles.administradorLabelRow]}>
-                    <Ionicons name="person-tie-outline" size={14} color={HoffColors.textSecondary} style={styles.infoIcon} />
-                    <Text style={styles.administradorLabel}>Administrador:</Text>
+                      <Text style={styles.clienteNombre}>{title}</Text>
+                    </View>
                   </View>
-                  <Text style={styles.administradorNombre}>{cliente.administrador_nombre}</Text>
-                  {cliente.administrador_telefono && (
+
+                  {cliente.telefono && (
                     <View style={styles.infoRow}>
-                      <Ionicons name="call-outline" size={14} color={HoffColors.textMuted} style={styles.infoIcon} />
-                      <Text style={styles.administradorInfo}>{cliente.administrador_telefono}</Text>
+                      <Ionicons name="call-outline" size={16} color={HoffColors.textSecondary} style={styles.infoIcon} />
+                      <Text style={styles.clienteInfo}>{cliente.telefono}</Text>
                     </View>
                   )}
-                </View>
-              )}
-            </TouchableOpacity>
-          ))
-        )}
-      </ScrollView>
 
-      {/* Botón flotante para crear cliente */}
+                  {cliente.email && (
+                    <View style={styles.infoRow}>
+                      <Ionicons name="mail-outline" size={16} color={HoffColors.textSecondary} style={styles.infoIcon} />
+                      <Text style={styles.clienteInfo}>{cliente.email}</Text>
+                    </View>
+                  )}
+
+                  {cliente.tipo === 'empresa' && cliente.administrador_nombre && (
+                    <View style={styles.administradorContainer}>
+                      <View style={[styles.infoRow, styles.administradorLabelRow]}>
+                        <Ionicons name="briefcase-outline" size={14} color={HoffColors.textSecondary} style={styles.infoIcon} />
+                        <Text style={styles.administradorLabel}>Administrador</Text>
+                      </View>
+                      <Text style={styles.administradorNombre}>{cliente.administrador_nombre}</Text>
+                      {cliente.administrador_telefono && (
+                        <View style={styles.infoRow}>
+                          <Ionicons name="call-outline" size={14} color={HoffColors.textMuted} style={styles.infoIcon} />
+                          <Text style={styles.administradorInfo}>{cliente.administrador_telefono}</Text>
+                        </View>
+                      )}
+                    </View>
+                  )}
+                </TouchableOpacity>
+              );
+            })
+          )}
+        </ScrollView>
+      </View>
+
       <TouchableOpacity
         style={styles.fab}
         onPress={() => router.push('/admin/clientes/crear')}
+        accessibilityRole="button"
+        accessibilityLabel="Crear cliente"
       >
-        <Text style={styles.fabText}>+</Text>
+        <Ionicons name="add" size={28} color={HoffColors.white} />
       </TouchableOpacity>
     </View>
   );
@@ -214,53 +282,28 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: HoffColors.textSecondary,
   },
-  searchContainer: {
-    padding: 16,
-    backgroundColor: HoffColors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: HoffColors.border,
+  searchWrap: {
+    paddingTop: taskSpacing.md,
+    paddingBottom: taskSpacing.sm,
   },
-  searchInput: {
-    backgroundColor: HoffColors.background,
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: HoffColors.border,
-  },
-  filtersContainer: {
+  chipsRow: {
     flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: HoffColors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: HoffColors.border,
-    gap: 8,
-  },
-  filterTab: {
-    flex: 1,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: HoffColors.background,
     alignItems: 'center',
+    paddingBottom: taskSpacing.md,
   },
-  filterTabActive: {
-    backgroundColor: HoffColors.primary,
-  },
-  filterTabText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: HoffColors.textSecondary,
-  },
-  filterTabTextActive: {
-    color: HoffColors.white,
+  listOuter: {
+    flex: 1,
+    maxWidth: taskContentMaxWidth,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: taskSpacing.lg,
   },
   listContainer: {
     flex: 1,
   },
   listContent: {
-    padding: 16,
+    paddingTop: taskSpacing.md,
+    paddingBottom: 96,
   },
   emptyContainer: {
     padding: 40,
@@ -272,18 +315,27 @@ const styles = StyleSheet.create({
   },
   clienteCard: {
     backgroundColor: HoffColors.surface,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    shadowColor: HoffColors.primaryDark,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    borderRadius: taskRadius.lg,
+    padding: taskSpacing.lg,
+    marginBottom: taskSpacing.md,
+    borderWidth: 1,
+    borderColor: HoffColors.border,
+    ...taskShadowCard,
   },
-  clienteHeader: {
+  clienteTopRow: {
     flexDirection: 'row',
-    justifyContent: 'flex-end',
+    alignItems: 'flex-start',
+    gap: taskSpacing.md,
+    marginBottom: taskSpacing.sm,
+  },
+  clienteBody: {
+    flex: 1,
+    minWidth: 0,
+  },
+  clienteHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: 8,
   },
   tipoBadge: {
@@ -294,36 +346,34 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     gap: 4,
   },
-  tipoIcon: {
-    fontSize: 14,
-  },
   tipoText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#fff',
+    color: HoffColors.white,
   },
   clienteNombre: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#333',
+    color: HoffColors.text,
     marginBottom: 4,
-  },
-  clienteEmpresa: {
-    fontSize: 14,
-    color: '#666',
-    fontStyle: 'italic',
-    marginBottom: 8,
   },
   clienteInfo: {
     fontSize: 14,
-    color: '#666',
+    color: HoffColors.textSecondary,
     marginTop: 4,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  infoIcon: {
+    marginRight: 8,
   },
   administradorContainer: {
     marginTop: 12,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#f0f0f0',
+    borderTopColor: HoffColors.border,
   },
   administradorLabelRow: {
     marginBottom: 4,
@@ -335,12 +385,12 @@ const styles = StyleSheet.create({
   },
   administradorNombre: {
     fontSize: 14,
-    color: '#333',
+    color: HoffColors.text,
     fontWeight: '500',
   },
   administradorInfo: {
     fontSize: 12,
-    color: '#666',
+    color: HoffColors.textSecondary,
     marginTop: 2,
   },
   fab: {
@@ -350,19 +400,9 @@ const styles = StyleSheet.create({
     width: 56,
     height: 56,
     borderRadius: 28,
-    backgroundColor: '#2196F3',
+    backgroundColor: HoffColors.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
-    elevation: 8,
-  },
-  fabText: {
-    fontSize: 28,
-    color: HoffColors.white,
-    fontWeight: 'bold',
+    ...taskShadowCard,
   },
 });
-

@@ -49,9 +49,24 @@ export default function WorkerLayout() {
         name="perfil"
         options={{
           title: 'Perfil',
+          headerShown: true,
+          headerStyle: { backgroundColor: HoffColors.primary },
+          headerTintColor: HoffColors.white,
+          headerTitleStyle: { fontWeight: 'bold' },
           tabBarIcon: ({ color, size }) => (
             <TabBarIcon name="person" color={color} size={size} />
           ),
+        }}
+      />
+      <Tabs.Screen
+        name="perfil-editar"
+        options={{
+          href: null,
+          title: 'Editar perfil',
+          headerShown: true,
+          headerStyle: { backgroundColor: HoffColors.primary },
+          headerTintColor: HoffColors.white,
+          headerTitleStyle: { fontWeight: 'bold' },
         }}
       />
     </Tabs>

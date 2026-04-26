@@ -13,8 +13,11 @@ import {
   View,
 } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
-import { useAuth } from '../../contexts/AuthContext';
-import { HoffColors } from '../../constants/theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { useAuth } from '@/contexts/AuthContext';
+import { HoffColors } from '@/constants/theme';
+import { taskContentMaxWidth, taskSpacing, taskRadius, taskShadowCard } from '@/constants/taskUi';
 
 export default function LoginScreen() {
   const [usuario, setUsuario] = useState('');
@@ -22,6 +25,7 @@ export default function LoginScreen() {
   const [loading, setLoading] = useState(false);
   const logoOpacity = useSharedValue(0);
   const logoScale = useSharedValue(0.92);
+  const insets = useSafeAreaInsets();
 
   const { login } = useAuth();
 
@@ -62,65 +66,86 @@ export default function LoginScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        <View style={styles.content}>
-          {/* Logo y título */}
-          <View style={styles.header}>
-            <Animated.View style={[styles.logoWrap, logoAnimatedStyle]}>
-              <Image
-                source={require('../../assets/images/logo.png')}
-                style={styles.logo}
-                resizeMode="contain"
-              />
-            </Animated.View>
-            <Text style={styles.subtitle}>House & Office Cleaning Services</Text>
-          </View>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={[styles.hero, { paddingTop: insets.top + taskSpacing.xl }]}>
+          <Animated.View style={[styles.logoWrap, logoAnimatedStyle]}>
+            <Image
+              source={require('../../assets/images/logo.png')}
+              style={styles.logo}
+              resizeMode="contain"
+            />
+          </Animated.View>
+          <Text style={styles.heroSubtitle}>House & Office Cleaning Services</Text>
+        </View>
 
-          {/* Formulario */}
-          <View style={styles.form}>
-            <View style={styles.inputContainer}>
+        <View style={styles.column}>
+          <View style={styles.formCard}>
+            <View style={styles.field}>
               <Text style={styles.label}>Usuario</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Ingresa tu usuario"
-                value={usuario}
-                onChangeText={setUsuario}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
+              <View style={styles.inputShell}>
+                <Ionicons name="person-outline" size={20} color={HoffColors.textMuted} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Ingresa tu usuario"
+                  placeholderTextColor={HoffColors.textMuted}
+                  value={usuario}
+                  onChangeText={setUsuario}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
             </View>
 
-            <View style={styles.inputContainer}>
+            <View style={styles.field}>
               <Text style={styles.label}>Contraseña</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Ingresa tu contraseña"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-                autoCapitalize="none"
-              />
+              <View style={styles.inputShell}>
+                <Ionicons name="lock-closed-outline" size={20} color={HoffColors.textMuted} />
+                <TextInput
+                  style={styles.input}
+                  placeholder="Ingresa tu contraseña"
+                  placeholderTextColor={HoffColors.textMuted}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                  autoCapitalize="none"
+                />
+              </View>
             </View>
 
             <TouchableOpacity
               style={[styles.loginButton, loading && styles.loginButtonDisabled]}
               onPress={handleLogin}
               disabled={loading}
+              activeOpacity={0.85}
             >
               {loading ? (
                 <ActivityIndicator color={HoffColors.white} />
               ) : (
-                <Text style={styles.loginButtonText}>Iniciar Sesión</Text>
+                <Text style={styles.loginButtonText}>Iniciar sesión</Text>
               )}
             </TouchableOpacity>
           </View>
 
-          {/* Credenciales de prueba */}
-          <View style={styles.testCredentials}>
-            <Text style={styles.testTitle}>Credenciales de prueba:</Text>
-            <Text style={styles.testText}>👤 Trabajador: jperez / worker123</Text>
-            <Text style={styles.testText}>👤 Admin: admin / admin123</Text>
-          </View>
+          {__DEV__ ? (
+            <View style={styles.devCard}>
+              <View style={styles.devHeader}>
+                <Ionicons name="information-circle-outline" size={18} color={HoffColors.textSecondary} />
+                <Text style={styles.devTitle}>Credenciales de prueba</Text>
+              </View>
+              <View style={styles.devLine}>
+                <Ionicons name="briefcase-outline" size={16} color={HoffColors.textMuted} />
+                <Text style={styles.devText}>Trabajador: jperez / worker123</Text>
+              </View>
+              <View style={styles.devLine}>
+                <Ionicons name="shield-outline" size={16} color={HoffColors.textMuted} />
+                <Text style={styles.devText}>Admin: admin / admin123</Text>
+              </View>
+            </View>
+          ) : null}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -134,79 +159,114 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+    paddingBottom: taskSpacing.xxl,
   },
-  content: {
-    flex: 1,
-    padding: 24,
-    justifyContent: 'center',
-  },
-  header: {
+  hero: {
+    backgroundColor: HoffColors.primary,
+    paddingBottom: taskSpacing.xxl,
+    paddingHorizontal: taskSpacing.lg,
     alignItems: 'center',
-    marginBottom: 40,
+    borderBottomLeftRadius: taskRadius.lg,
+    borderBottomRightRadius: taskRadius.lg,
   },
   logoWrap: {
-    marginBottom: 16,
+    marginBottom: taskSpacing.md,
   },
   logo: {
-    width: 160,
-    height: 160,
+    width: 140,
+    height: 140,
   },
-  subtitle: {
-    fontSize: 16,
-    color: HoffColors.textSecondary,
+  heroSubtitle: {
+    fontSize: 15,
+    color: 'rgba(255, 255, 255, 0.88)',
+    textAlign: 'center',
+    fontWeight: '500',
   },
-  form: {
-    marginBottom: 24,
+  column: {
+    maxWidth: taskContentMaxWidth,
+    width: '100%',
+    alignSelf: 'center',
+    paddingHorizontal: taskSpacing.lg,
+    marginTop: -taskSpacing.lg,
   },
-  inputContainer: {
-    marginBottom: 20,
+  formCard: {
+    backgroundColor: HoffColors.surface,
+    borderRadius: taskRadius.lg,
+    padding: taskSpacing.lg,
+    borderWidth: 1,
+    borderColor: HoffColors.border,
+    ...taskShadowCard,
+  },
+  field: {
+    marginBottom: taskSpacing.lg,
   },
   label: {
     fontSize: 14,
     fontWeight: '600',
     color: HoffColors.text,
-    marginBottom: 8,
+    marginBottom: taskSpacing.sm,
   },
-  input: {
+  inputShell: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: taskSpacing.sm,
     backgroundColor: HoffColors.surface,
     borderWidth: 1,
     borderColor: HoffColors.border,
-    borderRadius: 8,
-    padding: 16,
+    borderRadius: taskRadius.sm,
+    paddingHorizontal: taskSpacing.md,
+    paddingVertical: Platform.OS === 'ios' ? taskSpacing.md : taskSpacing.sm,
+  },
+  input: {
+    flex: 1,
     fontSize: 16,
+    color: HoffColors.text,
+    paddingVertical: Platform.OS === 'android' ? 4 : 0,
+    minHeight: 24,
   },
   loginButton: {
-    backgroundColor: HoffColors.accent,
-    borderRadius: 8,
-    padding: 16,
+    backgroundColor: HoffColors.primary,
+    borderRadius: taskRadius.lg,
+    paddingVertical: taskSpacing.lg,
     alignItems: 'center',
-    marginTop: 8,
+    marginTop: taskSpacing.sm,
   },
   loginButtonDisabled: {
-    opacity: 0.7,
+    opacity: 0.65,
   },
   loginButtonText: {
     color: HoffColors.white,
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: 17,
+    fontWeight: '700',
   },
-  testCredentials: {
+  devCard: {
+    marginTop: taskSpacing.lg,
     backgroundColor: HoffColors.surface,
-    borderRadius: 8,
-    padding: 16,
+    borderRadius: taskRadius.md,
+    padding: taskSpacing.md,
     borderWidth: 1,
     borderColor: HoffColors.border,
   },
-  testTitle: {
-    fontSize: 14,
+  devHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: taskSpacing.sm,
+    marginBottom: taskSpacing.sm,
+  },
+  devTitle: {
+    fontSize: 13,
     fontWeight: '600',
     color: HoffColors.textSecondary,
-    marginBottom: 8,
   },
-  testText: {
+  devLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: taskSpacing.sm,
+    marginTop: taskSpacing.xs,
+  },
+  devText: {
     fontSize: 13,
     color: HoffColors.textMuted,
-    marginBottom: 4,
+    flex: 1,
   },
 });
-

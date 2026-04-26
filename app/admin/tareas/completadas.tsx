@@ -1,23 +1,44 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
-  TextInput,
-  TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
   Alert,
+  useWindowDimensions,
+  TouchableOpacity,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import api, { Tarea, Trabajador } from '../../../services/api';
+import { HoffColors } from '@/constants/theme';
+import {
+  getTaskListCardLayout,
+  taskContentMaxWidth,
+  taskSpacing,
+  taskToolbarStrip,
+  taskToolbarColumn,
+  taskFilterSectionLabel,
+} from '@/constants/taskUi';
+import { taskEstadoColors } from '@/constants/taskEstadoColors';
+import {
+  AnimatedTaskCard,
+  StatusPill,
+  TaskSearchField,
+  TaskFilterChipRow,
+  TaskFiltersPanel,
+  type TaskFilterChipItem,
+} from '@/components/tareas';
 
 type FilterDate = 'todas' | 'hoy' | 'semana' | 'mes';
 
 export default function TareasCompletadasScreen() {
   const router = useRouter();
+  const { width: windowWidth } = useWindowDimensions();
+  const { cardWidth } = getTaskListCardLayout(windowWidth);
   const [tareas, setTareas] = useState<Tarea[]>([]);
   const [trabajadores, setTrabajadores] = useState<Trabajador[]>([]);
   const [filteredTareas, setFilteredTareas] = useState<Tarea[]>([]);
@@ -26,24 +47,15 @@ export default function TareasCompletadasScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [dateFilter, setDateFilter] = useState<FilterDate>('todas');
   const [selectedTrabajador, setSelectedTrabajador] = useState<number | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [draftSearchQuery, setDraftSearchQuery] = useState('');
+  const [draftDateFilter, setDraftDateFilter] = useState<FilterDate>('todas');
+  const [draftSelectedTrabajador, setDraftSelectedTrabajador] = useState<number | null>(null);
+  const listInFlightRef = useRef(false);
 
-  useEffect(() => {
-    loadTareas();
-    loadTrabajadores();
-  }, []);
-
-  useFocusEffect(
-    React.useCallback(() => {
-      loadTareas();
-      loadTrabajadores();
-    }, [])
-  );
-
-  useEffect(() => {
-    applyFilters();
-  }, [tareas, dateFilter, searchQuery, selectedTrabajador]);
-
-  const loadTareas = async () => {
+  const loadTareas = useCallback(async () => {
+    if (listInFlightRef.current) return;
+    listInFlightRef.current = true;
     try {
       const response = await api.getTareas();
       if (response.success && response.data) {
@@ -51,31 +63,39 @@ export default function TareasCompletadasScreen() {
         const completadas = response.data.filter((t: Tarea) => t.estado === 'completada');
         setTareas(completadas);
       }
-    } catch (error) {
+    } catch {
       Alert.alert('Error', 'No se pudieron cargar las tareas completadas');
     } finally {
       setLoading(false);
       setRefreshing(false);
+      listInFlightRef.current = false;
     }
-  };
+  }, []);
 
-  const loadTrabajadores = async () => {
+  const loadTrabajadores = useCallback(async () => {
     try {
       const response = await api.getTrabajadores();
       if (response.success && response.data) {
         setTrabajadores(response.data);
       }
-    } catch (error) {
+    } catch {
       // Silenciar error, no es crítico
     }
-  };
+  }, []);
 
-  const onRefresh = () => {
-    setRefreshing(true);
+  useEffect(() => {
     loadTareas();
-  };
+    loadTrabajadores();
+  }, [loadTareas, loadTrabajadores]);
 
-  const applyFilters = () => {
+  useFocusEffect(
+    useCallback(() => {
+      loadTareas();
+      loadTrabajadores();
+    }, [loadTareas, loadTrabajadores])
+  );
+
+  const applyFilters = useCallback(() => {
     let filtered = [...tareas];
 
     // Filtro por búsqueda
@@ -135,6 +155,35 @@ export default function TareasCompletadasScreen() {
     }
 
     setFilteredTareas(filtered);
+  }, [dateFilter, searchQuery, selectedTrabajador, tareas, trabajadores]);
+
+  useEffect(() => {
+    applyFilters();
+  }, [applyFilters]);
+
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    loadTareas();
+  }, [loadTareas]);
+
+  const openFilters = () => {
+    setDraftSearchQuery(searchQuery);
+    setDraftDateFilter(dateFilter);
+    setDraftSelectedTrabajador(selectedTrabajador);
+    setPanelOpen(true);
+  };
+
+  const applyDraftFilters = () => {
+    setSearchQuery(draftSearchQuery);
+    setDateFilter(draftDateFilter);
+    setSelectedTrabajador(draftSelectedTrabajador);
+    setPanelOpen(false);
+  };
+
+  const resetDraftFilters = () => {
+    setDraftSearchQuery('');
+    setDraftDateFilter('todas');
+    setDraftSelectedTrabajador(null);
   };
 
   const formatFecha = (fecha: string) => {
@@ -195,103 +244,121 @@ export default function TareasCompletadasScreen() {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#9C27B0" />
+        <ActivityIndicator size="large" color={HoffColors.primary} />
         <Text style={styles.loadingText}>Cargando tareas completadas...</Text>
       </View>
     );
   }
 
+  const workerChips: TaskFilterChipItem[] = [
+    {
+      key: 'all',
+      label: 'Todos',
+      active: selectedTrabajador === null,
+      onPress: () => setSelectedTrabajador(null),
+    },
+    ...trabajadores.map((trabajador) => ({
+      key: `w-${trabajador.id}`,
+      label: trabajador.nombre,
+      active: selectedTrabajador === trabajador.id,
+      onPress: () => setSelectedTrabajador(trabajador.id),
+    })),
+  ];
+
+  const dateChips: TaskFilterChipItem[] = [
+    {
+      key: 'todas',
+      label: `Todas (${getDateFilterCount('todas')})`,
+      active: dateFilter === 'todas',
+      onPress: () => setDateFilter('todas'),
+    },
+    {
+      key: 'hoy',
+      label: `Hoy (${getDateFilterCount('hoy')})`,
+      active: dateFilter === 'hoy',
+      onPress: () => setDateFilter('hoy'),
+    },
+    {
+      key: 'semana',
+      label: `Esta semana (${getDateFilterCount('semana')})`,
+      active: dateFilter === 'semana',
+      onPress: () => setDateFilter('semana'),
+    },
+    {
+      key: 'mes',
+      label: `Este mes (${getDateFilterCount('mes')})`,
+      active: dateFilter === 'mes',
+      onPress: () => setDateFilter('mes'),
+    },
+  ];
+
   return (
     <View style={styles.container}>
-      {/* Barra de búsqueda */}
-      <View style={styles.searchContainer}>
-        <View style={styles.searchBar}>
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Buscar tareas completadas..."
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-          />
-          <Text style={styles.searchIcon}>🔍</Text>
+      <View style={taskToolbarStrip}>
+        <View style={[taskToolbarColumn, styles.toolbarInner]}>
+          <TouchableOpacity style={styles.filtersButton} onPress={openFilters}>
+            <Ionicons name="options-outline" size={16} color={HoffColors.primary} />
+            <Text style={styles.filtersButtonText}>Filtros</Text>
+            {(searchQuery.trim().length > 0 || dateFilter !== 'todas' || selectedTrabajador !== null) && (
+              <View style={styles.activeBadge}>
+                <Text style={styles.activeBadgeText}>Activos</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+          <Text style={styles.filtersSummary}>
+            {searchQuery.trim().length > 0 || dateFilter !== 'todas' || selectedTrabajador !== null
+              ? 'Filtros aplicados'
+              : 'Sin filtros aplicados'}
+          </Text>
         </View>
       </View>
 
-      {/* Filtro por trabajador */}
-      <View style={styles.workerFilterContainer}>
-        <Text style={styles.filterLabel}>Filtrar por trabajador:</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.workerFilterScroll}>
-          <TouchableOpacity
-            style={[styles.workerChip, selectedTrabajador === null && styles.workerChipActive]}
-            onPress={() => setSelectedTrabajador(null)}
-          >
-            <Text style={[styles.workerChipText, selectedTrabajador === null && styles.workerChipTextActive]}>
-              Todos
-            </Text>
-          </TouchableOpacity>
-          {trabajadores.map((trabajador) => (
-            <TouchableOpacity
-              key={trabajador.id}
-              style={[styles.workerChip, selectedTrabajador === trabajador.id && styles.workerChipActive]}
-              onPress={() => setSelectedTrabajador(trabajador.id)}
-            >
-              <Text style={[styles.workerChipText, selectedTrabajador === trabajador.id && styles.workerChipTextActive]}>
-                {trabajador.nombre}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
-
-      {/* Filtros de fecha */}
-      <View style={styles.filtersContainer}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filtersScroll}>
-          <TouchableOpacity
-            style={[styles.filterChip, dateFilter === 'todas' && styles.filterChipActive]}
-            onPress={() => setDateFilter('todas')}
-          >
-            <Text style={[styles.filterChipText, dateFilter === 'todas' && styles.filterChipTextActive]}>
-              Todas ({getDateFilterCount('todas')})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.filterChip, dateFilter === 'hoy' && styles.filterChipActive]}
-            onPress={() => setDateFilter('hoy')}
-          >
-            <Text style={[styles.filterChipText, dateFilter === 'hoy' && styles.filterChipTextActive]}>
-              Hoy ({getDateFilterCount('hoy')})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.filterChip, dateFilter === 'semana' && styles.filterChipActive]}
-            onPress={() => setDateFilter('semana')}
-          >
-            <Text style={[styles.filterChipText, dateFilter === 'semana' && styles.filterChipTextActive]}>
-              Esta semana ({getDateFilterCount('semana')})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.filterChip, dateFilter === 'mes' && styles.filterChipActive]}
-            onPress={() => setDateFilter('mes')}
-          >
-            <Text style={[styles.filterChipText, dateFilter === 'mes' && styles.filterChipTextActive]}>
-              Este mes ({getDateFilterCount('mes')})
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </View>
+      <TaskFiltersPanel
+        visible={panelOpen}
+        onClose={() => setPanelOpen(false)}
+        onApply={applyDraftFilters}
+        onReset={resetDraftFilters}
+      >
+        <TaskSearchField
+          placeholder="Buscar tareas completadas..."
+          value={draftSearchQuery}
+          onChangeText={setDraftSearchQuery}
+        />
+        <Text style={taskFilterSectionLabel}>Filtrar por trabajador</Text>
+        <TaskFilterChipRow
+          chips={workerChips.map((chip) => ({
+            ...chip,
+            active: chip.key === 'all' ? draftSelectedTrabajador === null : draftSelectedTrabajador === Number(String(chip.key).replace('w-', '')),
+            onPress: () => {
+              if (chip.key === 'all') {
+                setDraftSelectedTrabajador(null);
+                return;
+              }
+              const id = Number(String(chip.key).replace('w-', ''));
+              setDraftSelectedTrabajador(Number.isNaN(id) ? null : id);
+            },
+          }))}
+        />
+        <TaskFilterChipRow
+          chips={dateChips.map((chip) => ({
+            ...chip,
+            active: draftDateFilter === (chip.key as FilterDate),
+            onPress: () => setDraftDateFilter(chip.key as FilterDate),
+          }))}
+        />
+      </TaskFiltersPanel>
 
       {/* Lista de tareas */}
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={styles.scrollContent}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={HoffColors.primary} />
+        }
       >
         {filteredTareas.length === 0 ? (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyStateText}>✅</Text>
+            <Ionicons name="checkmark-done-outline" size={48} color={HoffColors.textMuted} style={styles.emptyIcon} />
             <Text style={styles.emptyStateTitle}>No hay tareas completadas</Text>
             <Text style={styles.emptyStateSubtitle}>
               {dateFilter === 'todas' && 'No hay tareas completadas esperando aprobación'}
@@ -302,33 +369,36 @@ export default function TareasCompletadasScreen() {
           </View>
         ) : (
           <View style={styles.grid}>
-            {filteredTareas.map((tarea) => (
-              <View key={tarea.tarea_id} style={styles.card}>
-                <View style={styles.statusRow}>
-                  <View style={[styles.statusCircle, { backgroundColor: '#9C27B0' }]} />
-                  <Text style={styles.statusText}>Por aprobar</Text>
-                </View>
+            {filteredTareas.map((tarea, index) => (
+              <AnimatedTaskCard
+                key={tarea.id}
+                index={index}
+                style={{ width: cardWidth }}
+                onPress={() => router.push(`/admin/tareas/detalle?id=${tarea.id}`)}
+              >
+                <StatusPill label="Por aprobar" backgroundColor={taskEstadoColors.porAprobar} />
                 <Text style={styles.cardTitle} numberOfLines={1}>
                   {tarea.cliente_nombre}
                 </Text>
                 <Text style={styles.cardDescription} numberOfLines={2}>
                   {tarea.descripcion_general}
                 </Text>
-                {tarea.trabajadores_asignados && (
-                  <Text style={styles.cardWorker} numberOfLines={1}>
-                    👤 {tarea.trabajadores_asignados}
-                  </Text>
-                )}
+                {tarea.trabajadores_asignados ? (
+                  <View style={styles.cardMetaRow}>
+                    <Ionicons name="person-outline" size={14} color={HoffColors.primary} />
+                    <Text style={styles.cardWorker} numberOfLines={1}>
+                      {tarea.trabajadores_asignados}
+                    </Text>
+                  </View>
+                ) : null}
                 <View style={styles.cardFooter}>
-                  <Text style={styles.cardDate}>📅 {formatFecha(tarea.fecha_realizacion)}</Text>
-                  <TouchableOpacity 
-                    style={styles.detailsButton}
-                    onPress={() => router.push(`/admin/tareas/detalle?id=${tarea.tarea_id}`)}
-                  >
-                    <Text style={styles.detailsButtonText}>Más detalles »</Text>
-                  </TouchableOpacity>
+                  <View style={styles.cardMetaRow}>
+                    <Ionicons name="calendar-outline" size={14} color={HoffColors.textSecondary} />
+                    <Text style={styles.cardDate}>{formatFecha(tarea.fecha_realizacion)}</Text>
+                  </View>
+                  <Text style={styles.detailsButtonText}>Más detalles</Text>
                 </View>
-              </View>
+              </AnimatedTaskCard>
             ))}
           </View>
         )}
@@ -340,171 +410,76 @@ export default function TareasCompletadasScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F5F5F5',
+    backgroundColor: HoffColors.background,
+  },
+  toolbarInner: {
+    paddingTop: taskSpacing.md,
+    paddingBottom: taskSpacing.md,
+    gap: taskSpacing.sm,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#F5F5F5',
+    backgroundColor: HoffColors.background,
   },
   loadingText: {
-    marginTop: 12,
+    marginTop: taskSpacing.md,
     fontSize: 16,
-    color: '#666',
-  },
-  searchContainer: {
-    padding: 16,
-    backgroundColor: '#fff',
-  },
-  searchBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F5F5F5',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-  },
-  searchInput: {
-    flex: 1,
-    paddingVertical: 12,
-    fontSize: 16,
-  },
-  searchIcon: {
-    fontSize: 20,
-  },
-  workerFilterContainer: {
-    backgroundColor: '#fff',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  filterLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#666',
-    paddingHorizontal: 16,
-    marginBottom: 8,
-  },
-  workerFilterScroll: {
-    paddingHorizontal: 16,
-    gap: 8,
-  },
-  workerChip: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    backgroundColor: '#F5F5F5',
-    marginRight: 8,
-  },
-  workerChipActive: {
-    backgroundColor: '#2196F3',
-  },
-  workerChipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#666',
-  },
-  workerChipTextActive: {
-    color: '#fff',
-  },
-  filtersContainer: {
-    backgroundColor: '#fff',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E0E0E0',
-  },
-  filtersScroll: {
-    paddingHorizontal: 16,
-    gap: 8,
-  },
-  filterChip: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    backgroundColor: '#F5F5F5',
-    marginRight: 8,
-  },
-  filterChipActive: {
-    backgroundColor: '#9C27B0',
-  },
-  filterChipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#666',
-  },
-  filterChipTextActive: {
-    color: '#fff',
+    color: HoffColors.textSecondary,
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    padding: 16,
+    padding: taskSpacing.lg,
+    maxWidth: taskContentMaxWidth,
+    width: '100%' as const,
+    alignSelf: 'center',
+    flexGrow: 1,
   },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 12,
-  },
-  card: {
-    width: '48%',
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  statusCircle: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
-    marginRight: 6,
-  },
-  statusText: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#666',
+    justifyContent: 'flex-start',
+    gap: taskSpacing.md,
   },
   cardTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#333',
+    color: HoffColors.text,
     marginBottom: 4,
+    marginTop: taskSpacing.md,
   },
   cardDescription: {
     fontSize: 13,
-    color: '#666',
-    marginBottom: 8,
+    color: HoffColors.textSecondary,
+    marginBottom: taskSpacing.sm,
     minHeight: 36,
   },
+  cardMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: taskSpacing.sm,
+  },
   cardWorker: {
+    flex: 1,
     fontSize: 12,
-    color: '#2196F3',
-    marginBottom: 8,
+    color: HoffColors.primary,
+    fontWeight: '600',
   },
   cardFooter: {
     marginTop: 'auto',
   },
   cardDate: {
     fontSize: 12,
-    color: '#666',
-    marginBottom: 8,
-  },
-  detailsButton: {
-    alignSelf: 'flex-start',
+    color: HoffColors.textSecondary,
   },
   detailsButtonText: {
-    fontSize: 12,
-    color: '#9C27B0',
-    fontWeight: '600',
+    fontSize: 13,
+    color: HoffColors.accentDark,
+    fontWeight: '700',
   },
   emptyState: {
     flex: 1,
@@ -512,20 +487,51 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 60,
   },
-  emptyStateText: {
-    fontSize: 64,
-    marginBottom: 16,
+  emptyIcon: {
+    marginBottom: taskSpacing.md,
   },
   emptyStateTitle: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#333',
-    marginBottom: 8,
+    color: HoffColors.text,
+    marginBottom: taskSpacing.sm,
   },
   emptyStateSubtitle: {
     fontSize: 14,
-    color: '#666',
+    color: HoffColors.textSecondary,
     textAlign: 'center',
+  },
+  filtersButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: taskSpacing.sm,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: HoffColors.primary,
+    backgroundColor: HoffColors.primarySoft,
+    paddingHorizontal: taskSpacing.md,
+    paddingVertical: taskSpacing.sm,
+  },
+  filtersButtonText: {
+    color: HoffColors.primary,
+    fontWeight: '700',
+  },
+  activeBadge: {
+    marginLeft: taskSpacing.xs,
+    backgroundColor: HoffColors.primary,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  activeBadgeText: {
+    color: HoffColors.white,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  filtersSummary: {
+    fontSize: 12,
+    color: HoffColors.textSecondary,
   },
 });
 

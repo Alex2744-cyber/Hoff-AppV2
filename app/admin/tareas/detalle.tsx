@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -10,50 +11,31 @@ import {
   Linking,
   TextInput,
   Modal,
+  Platform,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as Haptics from 'expo-haptics';
 import { useAuth } from '../../../contexts/AuthContext';
 import api from '../../../services/api';
 import { HoffColors } from '@/constants/theme';
-import { getEstadoColor, getEstadoText, decimalATiempo } from '@/utils/tareas';
-
-// Funciones de conversión entre formato tiempo (HH:MM) y decimal (solo admin)
-const tiempoADecimal = (tiempo: string): number => {
-  if (!tiempo || !tiempo.trim()) return 0;
-  
-  // Si no tiene formato de tiempo, intentar parsear como decimal (retrocompatibilidad)
-  if (!tiempo.includes(':')) {
-    const decimal = parseFloat(tiempo);
-    return isNaN(decimal) ? 0 : decimal;
-  }
-  
-  const partes = tiempo.split(':');
-  if (partes.length !== 2) return 0;
-  
-  const horas = parseInt(partes[0], 10);
-  const minutos = parseInt(partes[1], 10);
-  
-  if (isNaN(horas) || isNaN(minutos)) return 0;
-  
-  return horas + (minutos / 60);
-};
-
-const validarFormatoTiempo = (tiempo: string): boolean => {
-  if (!tiempo || !tiempo.trim()) return true; // Vacío es válido (opcional)
-  
-  // Permitir formato decimal también (retrocompatibilidad)
-  if (!tiempo.includes(':')) {
-    const decimal = parseFloat(tiempo);
-    return !isNaN(decimal) && decimal >= 0;
-  }
-  
-  // Validar formato HH:MM
-  const regex = /^(\d{1,2}):([0-5]?\d)$/;
-  if (!regex.test(tiempo)) return false;
-  
-  const [horas, minutos] = tiempo.split(':').map(Number);
-  return horas >= 0 && horas < 1000 && minutos >= 0 && minutos < 60;
-};
+import { taskSpacing } from '@/constants/taskUi';
+import {
+  TaskScreenContainer,
+  TaskSection,
+  StatusPill,
+  TaskDetailRow,
+  TaskPrimaryButton,
+  TaskSecondaryButton,
+  TaskEvidenceViewer,
+} from '@/components/tareas';
+import {
+  decimalATiempo,
+  getEstadoColor,
+  getEstadoText,
+  tiempoADecimal,
+  validarFormatoTiempo,
+} from '@/utils/tareas';
 
 export default function TareaDetalleScreen() {
   const { id } = useLocalSearchParams();
@@ -72,27 +54,40 @@ export default function TareaDetalleScreen() {
   const [trabajadorSeleccionado, setTrabajadorSeleccionado] = useState<number | null>(null);
   const [horasAsignar, setHorasAsignar] = useState('0:00');
   const [loadingTrabajadores, setLoadingTrabajadores] = useState(false);
-  const [showMarcarPagadoModal, setShowMarcarPagadoModal] = useState(false);
-  const [referenciaPago, setReferenciaPago] = useState('');
+  const [savingAsignacion, setSavingAsignacion] = useState(false);
+  const [showDesasignarModal, setShowDesasignarModal] = useState(false);
+  const [desasignarTarget, setDesasignarTarget] = useState<{
+    id: number;
+    nombre: string;
+  } | null>(null);
+  const [desasignando, setDesasignando] = useState(false);
+  const [aprobando, setAprobando] = useState(false);
 
+  const isFirstFocusRef = useRef(true);
+  const detalleInFlightRef = useRef(false);
   useEffect(() => {
-    loadTareaDetalle();
+    isFirstFocusRef.current = true;
   }, [id]);
 
-  const loadTareaDetalle = async () => {
+  const loadTareaDetalle = useCallback(async (opts?: { silent?: boolean }) => {
+    if (detalleInFlightRef.current) return;
+    detalleInFlightRef.current = true;
+    const silent = Boolean(opts?.silent);
     try {
+      if (!silent) setLoading(true);
       const response = await api.getTareaById(Number(id));
       if (response.success && response.data) {
         setTarea(response.data);
-        
-        // Inicializar horas por trabajador (en decimal y formato tiempo)
+
         if (response.data.trabajadores) {
-          const horasIniciales: {[key: number]: number} = {};
-          const horasTiempoIniciales: {[key: number]: string} = {};
+          const horasIniciales: { [key: number]: number } = {};
+          const horasTiempoIniciales: { [key: number]: string } = {};
+          const n = Number(response.data.numero_horas);
           response.data.trabajadores.forEach((trabajador: any) => {
-            const horasDecimal = trabajador.horas_aprobadas || 
-                                 trabajador.horas_asignadas || 
-                                 (response.data.numero_horas / response.data.trabajadores.length);
+            const horasDecimal =
+              trabajador.horas_aprobadas ||
+              trabajador.horas_asignadas ||
+              (Number.isFinite(n) ? n : 0);
             horasIniciales[trabajador.id] = horasDecimal;
             horasTiempoIniciales[trabajador.id] = decimalATiempo(horasDecimal);
           });
@@ -100,12 +95,25 @@ export default function TareaDetalleScreen() {
           setHorasTiempoPorTrabajador(horasTiempoIniciales);
         }
       }
-    } catch (error) {
+    } catch {
       Alert.alert('Error', 'No se pudo cargar el detalle de la tarea');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
+      detalleInFlightRef.current = false;
     }
-  };
+  }, [id]);
+
+  const refreshDetalle = useCallback(async () => {
+    await loadTareaDetalle({ silent: true });
+  }, [loadTareaDetalle]);
+
+  useFocusEffect(
+    useCallback(() => {
+      const silent = !isFirstFocusRef.current;
+      isFirstFocusRef.current = false;
+      loadTareaDetalle({ silent });
+    }, [loadTareaDetalle])
+  );
 
   const updateHoras = (trabajadorId: number, tiempo: string) => {
     // Filtrar solo números y ":"
@@ -136,45 +144,70 @@ export default function TareaDetalleScreen() {
   };
 
   const handleAprobarTarea = async () => {
-    const tiempoServicio = getTiempoServicio();
-    
-    Alert.alert(
-      '¿Aprobar tarea?',
-      `Tiempo del servicio: ${tiempoServicio}h\n\n¿Confirmas que el trabajo se realizó correctamente? Esto creará un registro permanente.`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Aprobar',
-          style: 'default',
-          onPress: async () => {
-            try {
-              // Preparar horas de trabajadores
-              const horasArray = Object.entries(horasPorTrabajador).map(([trabajadorId, horas]) => ({
-                trabajador_id: parseInt(trabajadorId),
-                horas: horas
-              }));
+    if (!user?.id || user.tipo !== 'admin') {
+      Alert.alert('Error', 'Se requiere sesión de administrador para aprobar.');
+      return;
+    }
 
-              const response = await api.aprobarTarea(
-                Number(tarea.id), 
-                user!.id, 
-                notasAprobacion || undefined,
-                horasArray
-              );
-              
-              if (response.success) {
-                Alert.alert(
-                  '¡Tarea aprobada!', 
-                  `Registro permanente creado.\nTiempo del servicio: ${tiempoServicio}h`,
-                  [{ text: 'OK', onPress: () => router.back() }]
-                );
-              }
-            } catch (error: any) {
-              Alert.alert('Error', error.message || 'No se pudo aprobar la tarea');
-            }
-          },
-        },
-      ]
-    );
+    const tiempoServicio = getTiempoServicio();
+    const mensajeConfirm = `Tiempo del servicio: ${tiempoServicio}h\n\n¿Confirmas que el trabajo se realizó correctamente? Esto creará un registro permanente.`;
+
+    // En web, Alert.alert con varios botones no siempre ejecuta onPress; usar confirm nativo del navegador.
+    let confirmado = false;
+    if (Platform.OS === 'web') {
+      confirmado = window.confirm(`¿Aprobar tarea?\n\n${mensajeConfirm}`);
+    } else {
+      confirmado = await new Promise<boolean>((resolve) => {
+        Alert.alert('¿Aprobar tarea?', mensajeConfirm, [
+          { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Aprobar', style: 'default', onPress: () => resolve(true) },
+        ]);
+      });
+    }
+
+    if (!confirmado || aprobando) return;
+
+    const horasArray = Object.entries(horasPorTrabajador)
+      .map(([trabajadorId, horas]) => ({
+        trabajador_id: parseInt(trabajadorId, 10),
+        horas: Number(horas),
+      }))
+      .filter((row) => Number.isFinite(row.horas) && Number.isFinite(row.trabajador_id));
+
+    try {
+      setAprobando(true);
+      const response = await api.aprobarTarea(
+        Number(tarea.id),
+        user.id,
+        notasAprobacion || undefined,
+        horasArray.length > 0 ? horasArray : undefined
+      );
+
+      if (!response?.success) {
+        Alert.alert(
+          'Error',
+          (response as { error?: string })?.error || 'No se pudo aprobar la tarea'
+        );
+        return;
+      }
+
+      await refreshDetalle();
+      setNotasAprobacion('');
+      try {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch {
+        /* haptics opcional */
+      }
+      Alert.alert(
+        '¡Tarea aprobada!',
+        `Registro permanente creado.\nTiempo del servicio: ${tiempoServicio}h`,
+        [{ text: 'OK' }]
+      );
+    } catch (error: any) {
+      Alert.alert('Error', error?.message || 'No se pudo aprobar la tarea');
+    } finally {
+      setAprobando(false);
+    }
   };
 
   const handleDevolverTarea = () => {
@@ -197,13 +230,12 @@ export default function TareaDetalleScreen() {
       );
       
       if (response.success) {
+        setMensajeRechazo('');
+        await refreshDetalle();
         Alert.alert(
           'Tarea devuelta',
           'La tarea ha sido devuelta a los trabajadores con tu mensaje.',
-          [{ text: 'OK', onPress: () => {
-            setMensajeRechazo('');
-            loadTareaDetalle();
-          }}]
+          [{ text: 'OK' }]
         );
       }
     } catch (error: any) {
@@ -236,7 +268,7 @@ export default function TareaDetalleScreen() {
         );
         setTrabajadores(disponibles);
       }
-    } catch (error) {
+    } catch {
       Alert.alert('Error', 'No se pudieron cargar los trabajadores');
     } finally {
       setLoadingTrabajadores(false);
@@ -246,69 +278,137 @@ export default function TareaDetalleScreen() {
   const handleAbrirAsignarModal = () => {
     loadTrabajadores();
     setShowAsignarModal(true);
-    // Pre-calcular horas por defecto
-    if (tarea.numero_horas && tarea.trabajadores && tarea.trabajadores.length > 0) {
-      const horasPorTrabajador = tarea.numero_horas / (tarea.trabajadores.length + 1);
-      setHorasAsignar(decimalATiempo(horasPorTrabajador));
-    } else if (tarea.numero_horas) {
-      setHorasAsignar(decimalATiempo(tarea.numero_horas));
+    if (tarea.numero_horas != null && Number.isFinite(Number(tarea.numero_horas))) {
+      setHorasAsignar(decimalATiempo(Number(tarea.numero_horas)));
+    } else {
+      setHorasAsignar('0:00');
     }
   };
 
-  const handleAsignarTrabajador = async () => {
+  const handleGuardarAsignacion = async () => {
     if (!trabajadorSeleccionado) {
       Alert.alert('Error', 'Selecciona un trabajador');
       return;
     }
+    if (savingAsignacion) return;
 
-    const horasDecimal = tiempoADecimal(horasAsignar);
-    
+    const raw = tiempoADecimal(horasAsignar);
+    let horasParaApi: number | undefined;
+    if (!Number.isFinite(raw) || raw <= 0) {
+      horasParaApi = undefined;
+    } else if (tarea.numero_horas != null && Number.isFinite(Number(tarea.numero_horas))) {
+      horasParaApi = Math.min(raw, Number(tarea.numero_horas));
+    } else {
+      horasParaApi = raw;
+    }
+
     try {
+      setSavingAsignacion(true);
       const response = await api.asignarTrabajador(
         Number(tarea.id),
         trabajadorSeleccionado,
-        horasDecimal || undefined
+        horasParaApi
       );
-      
-      if (response.success) {
-        Alert.alert('Éxito', 'Trabajador asignado correctamente', [
-          { text: 'OK', onPress: () => {
-            setShowAsignarModal(false);
-            setTrabajadorSeleccionado(null);
-            setHorasAsignar('0:00');
-            loadTareaDetalle();
-          }}
-        ]);
+
+      if (!response.success) {
+        Alert.alert(
+          'Error',
+          (response as { error?: string }).error || 'No se pudo asignar el trabajador'
+        );
+        return;
       }
+
+      await refreshDetalle();
+      setShowAsignarModal(false);
+      setTrabajadorSeleccionado(null);
+      setHorasAsignar('0:00');
+      try {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch {
+        /* haptics opcional */
+      }
+      Alert.alert('Éxito', 'Trabajador asignado correctamente', [{ text: 'OK' }]);
     } catch (error: any) {
       Alert.alert('Error', error.message || 'No se pudo asignar el trabajador');
+    } finally {
+      setSavingAsignacion(false);
     }
   };
 
-  const handleDesasignarTrabajador = (trabajadorId: number, trabajadorNombre: string) => {
-    Alert.alert(
-      '¿Desasignar trabajador?',
-      `¿Estás seguro de desasignar a ${trabajadorNombre}?`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Desasignar',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const response = await api.desasignarTrabajador(Number(tarea.id), trabajadorId);
-              if (response.success) {
-                Alert.alert('Éxito', 'Trabajador desasignado', [
-                  { text: 'OK', onPress: () => loadTareaDetalle() }
-                ]);
-              }
-            } catch (error: any) {
-              Alert.alert('Error', error.message || 'No se pudo desasignar el trabajador');
-            }
-          }
+  const handleGuardarHorasAsignadas = async (trabajadorId: number) => {
+    const tiempo = horasTiempoPorTrabajador[trabajadorId] || '0:00';
+    if (!validarFormatoTiempo(tiempo)) {
+      Alert.alert('Error', 'Usa el formato de horas H:MM o HH:MM (ej. 3:30)');
+      return;
+    }
+    const decimal = tiempoADecimal(tiempo);
+    const maxH = tarea.numero_horas != null ? Number(tarea.numero_horas) : null;
+    if (maxH != null && Number.isFinite(maxH) && decimal > maxH) {
+      Alert.alert(
+        'Error',
+        `Las horas no pueden superar la duración de la tarea (${decimalATiempo(maxH)}).`
+      );
+      return;
+    }
+    try {
+      const response = await api.actualizarHorasTrabajador(
+        Number(tarea.id),
+        trabajadorId,
+        decimal
+      );
+      if (response.success) {
+        await refreshDetalle();
+        try {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        } catch {
+          /* haptics opcional */
         }
-      ]
-    );
+        Alert.alert('Guardado', 'Horas del trabajador actualizadas');
+      }
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'No se pudieron actualizar las horas');
+    }
+  };
+
+  const cerrarModalDesasignar = () => {
+    if (desasignando) return;
+    setShowDesasignarModal(false);
+    setDesasignarTarget(null);
+  };
+
+  const handleDesasignarTrabajador = (trabajadorId: number, trabajadorNombre: string) => {
+    setDesasignarTarget({ id: trabajadorId, nombre: trabajadorNombre });
+    setShowDesasignarModal(true);
+  };
+
+  const confirmarDesasignar = async () => {
+    if (!desasignarTarget || desasignando || !tarea?.id) return;
+
+    try {
+      setDesasignando(true);
+      const response = await api.desasignarTrabajador(Number(tarea.id), desasignarTarget.id);
+      if (!response.success) {
+        Alert.alert(
+          'Error',
+          (response as { error?: string }).error || 'No se pudo desasignar el trabajador'
+        );
+        return;
+      }
+
+      await refreshDetalle();
+      setShowDesasignarModal(false);
+      setDesasignarTarget(null);
+      try {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch {
+        /* haptics opcional */
+      }
+      Alert.alert('Éxito', 'Trabajador desasignado', [{ text: 'OK' }]);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'No se pudo desasignar el trabajador');
+    } finally {
+      setDesasignando(false);
+    }
   };
 
   const handleCancelarTarea = () => {
@@ -324,6 +424,7 @@ export default function TareaDetalleScreen() {
             try {
               const response = await api.cancelarTarea(Number(tarea.id));
               if (response.success) {
+                await refreshDetalle();
                 Alert.alert('Éxito', 'Tarea cancelada', [
                   { text: 'OK', onPress: () => router.back() }
                 ]);
@@ -338,39 +439,8 @@ export default function TareaDetalleScreen() {
   };
 
   const handleEditarTarea = () => {
-    Alert.alert(
-      'Editar Tarea',
-      'La funcionalidad de edición de tareas estará disponible próximamente. Por ahora puedes cancelar esta tarea y crear una nueva con los datos actualizados.',
-      [{ text: 'OK' }]
-    );
-  };
-
-  const handleMarcarComoPagado = () => {
-    setShowMarcarPagadoModal(true);
-  };
-
-  const confirmarMarcarPagado = async () => {
-    if (!tarea?.registro_aprobacion) return;
-    
-    setShowMarcarPagadoModal(false);
-    
-    try {
-      const response = await api.marcarTareaComoPagada(
-        Number(tarea.id),
-        referenciaPago.trim() || undefined
-      );
-      
-      if (response.success) {
-        Alert.alert('Éxito', 'Tarea marcada como pagada', [
-          { text: 'OK', onPress: () => {
-            setReferenciaPago('');
-            loadTareaDetalle();
-          }}
-        ]);
-      }
-    } catch (error: any) {
-      Alert.alert('Error', error.message || 'No se pudo marcar como pagado');
-    }
+    if (!tarea?.id) return;
+    router.push(`/admin/tareas/editar?id=${tarea.id}`);
   };
 
   if (loading) {
@@ -400,18 +470,15 @@ export default function TareaDetalleScreen() {
   const esCancelada = tarea.estado === 'cancelada';
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <TaskScreenContainer bottomInsetExtra={72}>
+      <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
       {/* Card de Estado */}
-      <View style={styles.card}>
-        <View style={styles.statusRow}>
-          <View style={[styles.statusCircle, { backgroundColor: getEstadoColor(tarea.estado) }]} />
-          <Text style={styles.statusText}>{getEstadoText(tarea.estado)}</Text>
-        </View>
-      </View>
+      <TaskSection title="Estado">
+        <StatusPill label={getEstadoText(tarea.estado)} backgroundColor={getEstadoColor(tarea.estado)} />
+      </TaskSection>
 
       {/* Descripción */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>📋 Descripción del Servicio</Text>
+      <TaskSection title="Descripción del servicio">
         <Text style={styles.description}>{tarea.descripcion_general}</Text>
         {tarea.detalles_especificos && (
           <>
@@ -419,38 +486,47 @@ export default function TareaDetalleScreen() {
             <Text style={styles.details}>{tarea.detalles_especificos}</Text>
           </>
         )}
-      </View>
+      </TaskSection>
 
       {/* Información Financiera */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>💰 Información Financiera</Text>
+      <TaskSection title="Información financiera">
         <View style={styles.financeRow}>
           <Text style={styles.financeLabel}>Valor del servicio:</Text>
           <Text style={styles.financeValue}>€{parseFloat(tarea.valor_servicio).toFixed(2)}</Text>
         </View>
-      </View>
+      </TaskSection>
 
       {/* Cliente */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>👤 Cliente</Text>
+      <TaskSection title="Cliente">
         <Text style={styles.clientName}>{tarea.cliente_nombre}</Text>
-        <Text style={styles.clientType}>
-          {tarea.cliente_tipo === 'empresa' ? '🏢 Empresa' : '👤 Particular'}
-        </Text>
+        <View style={styles.clientTypeRow}>
+          <Ionicons
+            name={tarea.cliente_tipo === 'empresa' ? 'business-outline' : 'person-outline'}
+            size={18}
+            color={HoffColors.textSecondary}
+            style={styles.clientTypeIcon}
+          />
+          <Text style={styles.clientType}>
+            {tarea.cliente_tipo === 'empresa' ? 'Empresa' : 'Particular'}
+          </Text>
+        </View>
         {tarea.cliente_email && (
-          <Text style={styles.clientEmail}>📧 {tarea.cliente_email}</Text>
+          <View style={styles.detailInlineRow}>
+            <Ionicons name="mail-outline" size={18} color={HoffColors.textSecondary} />
+            <Text style={styles.clientEmail}>{tarea.cliente_email}</Text>
+          </View>
         )}
         {tarea.cliente_telefono && (
           <TouchableOpacity style={styles.contactButton} onPress={handleLlamarCliente}>
-            <Text style={styles.contactButtonText}>📞 {tarea.cliente_telefono}</Text>
+            <Ionicons name="call-outline" size={20} color={HoffColors.white} />
+            <Text style={styles.contactButtonText}>{tarea.cliente_telefono}</Text>
           </TouchableOpacity>
         )}
-      </View>
+      </TaskSection>
 
       {/* Administrador (solo para empresas) */}
       {tarea.cliente_tipo === 'empresa' && tarea.cliente_administrador_nombre && (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>👔 Administrador de la Empresa</Text>
+        <TaskSection title="Administrador de la empresa">
           <Text style={styles.clientName}>{tarea.cliente_administrador_nombre}</Text>
           {tarea.cliente_administrador_telefono && (
             <TouchableOpacity 
@@ -461,28 +537,31 @@ export default function TareaDetalleScreen() {
                 }
               }}
             >
-              <Text style={styles.contactButtonText}>📞 {tarea.cliente_administrador_telefono}</Text>
+              <Ionicons name="call-outline" size={20} color={HoffColors.white} />
+              <Text style={styles.contactButtonText}>{tarea.cliente_administrador_telefono}</Text>
             </TouchableOpacity>
           )}
           {tarea.cliente_administrador_email && (
-            <Text style={styles.clientEmail}>📧 {tarea.cliente_administrador_email}</Text>
+            <View style={styles.detailInlineRow}>
+              <Ionicons name="mail-outline" size={18} color={HoffColors.textSecondary} />
+              <Text style={styles.clientEmail}>{tarea.cliente_administrador_email}</Text>
+            </View>
           )}
-        </View>
+        </TaskSection>
       )}
 
       {/* Ubicación */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>📍 Ubicación</Text>
+      <TaskSection title="Ubicación">
         <Text style={styles.address}>{tarea.direccion_completa}</Text>
         <Text style={styles.city}>{tarea.codigo_postal && `${tarea.codigo_postal}, `}{tarea.ciudad}</Text>
         <TouchableOpacity style={styles.mapsButton} onPress={handleAbrirMaps}>
-          <Text style={styles.mapsButtonText}>🗺️ Abrir en Google Maps</Text>
+          <Ionicons name="map-outline" size={20} color={HoffColors.white} />
+          <Text style={styles.mapsButtonText}>Abrir en Google Maps</Text>
         </TouchableOpacity>
-      </View>
+      </TaskSection>
 
       {/* Fecha y horario */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>📅 Programación</Text>
+      <TaskSection title="Programación">
         <View style={styles.dateRow}>
           <Text style={styles.dateLabel}>Fecha de realización:</Text>
           <Text style={styles.date}>
@@ -500,65 +579,86 @@ export default function TareaDetalleScreen() {
             {new Date(tarea.fecha_creacion).toLocaleDateString('es-ES')}
           </Text>
         </View>
-      </View>
+      </TaskSection>
 
       {/* Equipo de trabajo */}
       {tarea.trabajadores && tarea.trabajadores.length > 0 && (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>👥 Trabajadores Asignados</Text>
+        <TaskSection title="Trabajadores asignados">
           {tarea.trabajadores.map((trabajador: any) => (
             <View key={trabajador.id} style={styles.workerItem}>
-              <Text style={styles.workerName}>👷 {trabajador.nombre}</Text>
+              <View style={styles.workerNameRow}>
+                <Ionicons name="construct-outline" size={18} color={HoffColors.primary} />
+                <Text style={styles.workerName}>{trabajador.nombre}</Text>
+              </View>
               <Text style={styles.workerHours}>
-                {trabajador.horas_asignadas ? `${decimalATiempo(parseFloat(trabajador.horas_asignadas))} asignadas` : 
-                `${decimalATiempo(tarea.numero_horas / tarea.trabajadores.length)} por defecto`}
+                {trabajador.horas_asignadas
+                  ? `${decimalATiempo(parseFloat(trabajador.horas_asignadas))} asignadas`
+                  : tarea.numero_horas
+                    ? `${decimalATiempo(tarea.numero_horas)} (duración tarea)`
+                    : 'Sin horas definidas'}
               </Text>
             </View>
           ))}
           {/* Tiempo del servicio */}
           {(() => {
             const horasTrabajadores = tarea.trabajadores.map((trabajador: any) => {
-              return trabajador.horas_aprobadas || 
-                     trabajador.horas_asignadas || 
-                     (tarea.numero_horas ? tarea.numero_horas / tarea.trabajadores.length : 0);
+              return (
+                trabajador.horas_aprobadas ||
+                trabajador.horas_asignadas ||
+                (tarea.numero_horas ? tarea.numero_horas : 0)
+              );
             });
             const tiempoServicio = horasTrabajadores.length > 0 ? Math.max(...horasTrabajadores.map((h: any) => parseFloat(h) || 0)) : 0;
             return tiempoServicio > 0 ? (
               <View style={styles.tiempoServicioBox}>
-                <Text style={styles.tiempoServicioLabel}>⏱️ Tiempo del servicio:</Text>
+                <View style={styles.tiempoServicioLabelRow}>
+                  <Ionicons name="timer-outline" size={18} color={HoffColors.primary} />
+                  <Text style={styles.tiempoServicioLabel}>Tiempo del servicio</Text>
+                </View>
                 <Text style={styles.tiempoServicioValue}>{decimalATiempo(tiempoServicio)}</Text>
               </View>
             ) : null;
           })()}
-        </View>
+        </TaskSection>
       )}
 
       {/* Comentarios del trabajador */}
       {tarea.comentarios_trabajador && (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>💬 Comentarios del Trabajador</Text>
+        <TaskSection title="Comentarios del trabajador">
           <View style={styles.comentariosBox}>
             <Text style={styles.comentariosText}>{tarea.comentarios_trabajador}</Text>
           </View>
-        </View>
+        </TaskSection>
       )}
+
+      {(() => {
+        const uris =
+          tarea.evidencias && tarea.evidencias.length > 0
+            ? tarea.evidencias.map((e: { url: string }) => e.url)
+            : tarea.evidencia_url
+              ? [tarea.evidencia_url]
+              : [];
+        return uris.length > 0 ? <TaskEvidenceViewer imageUris={uris} title="Evidencia del trabajo" /> : null;
+      })()}
 
       {/* Mensaje de rechazo si existe */}
       {tarea.mensaje_rechazo && (
-        <View style={styles.card}>
+        <TaskSection title="Aviso">
           <View style={[styles.rechazoBox, { backgroundColor: HoffColors.background }]}>
-            <Text style={[styles.rechazoTitle, { color: HoffColors.accentDark }]}>
-              ⚠️ Mensaje del Administrador
-            </Text>
+            <View style={styles.rechazoTitleRow}>
+              <Ionicons name="warning-outline" size={20} color={HoffColors.accentDark} />
+              <Text style={[styles.rechazoTitle, { color: HoffColors.accentDark }]}>
+                Mensaje del administrador
+              </Text>
+            </View>
             <Text style={styles.rechazoText}>{tarea.mensaje_rechazo}</Text>
           </View>
-        </View>
+        </TaskSection>
       )}
 
       {/* Aprobar tarea (solo si está completada) */}
       {puedeAprobar && (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>✅ Aprobar Trabajo</Text>
+        <TaskSection title="Aprobar trabajo">
           
           {/* Ajustar horas individuales */}
           <Text style={styles.subsectionTitle}>Ajustar horas por trabajador:</Text>
@@ -583,7 +683,10 @@ export default function TareaDetalleScreen() {
           ))}
           
           <View style={styles.servicioTiempoBox}>
-            <Text style={styles.servicioTiempoLabel}>⏱️ Tiempo del servicio:</Text>
+            <View style={styles.tiempoServicioLabelRow}>
+              <Ionicons name="timer-outline" size={18} color={HoffColors.primary} />
+              <Text style={styles.servicioTiempoLabel}>Tiempo del servicio</Text>
+            </View>
             <Text style={styles.servicioTiempoValue}>{decimalATiempo(getTiempoServicio())}</Text>
           </View>
           <Text style={styles.servicioTiempoNote}>
@@ -601,24 +704,35 @@ export default function TareaDetalleScreen() {
             numberOfLines={3}
           />
           
-          <TouchableOpacity style={styles.approveButton} onPress={handleAprobarTarea}>
-            <Text style={styles.approveButtonText}>✅ Aprobar y Crear Registro Permanente</Text>
-          </TouchableOpacity>
-          <Text style={styles.approvalWarning}>
-            ⚠️ Al aprobar se creará un registro inmutable para nóminas y contabilidad
-          </Text>
+          <View style={styles.primaryActionWithIcon}>
+            <Ionicons name="checkmark-circle-outline" size={22} color={HoffColors.primaryDark} />
+            <TaskPrimaryButton
+              label="Aprobar y crear registro permanente"
+              onPress={handleAprobarTarea}
+              disabled={aprobando}
+              loading={aprobando}
+              style={styles.taskBtnFlex}
+            />
+          </View>
+          <View style={styles.warningInline}>
+            <Ionicons name="warning-outline" size={16} color={HoffColors.accent} />
+            <Text style={styles.approvalWarning}>
+              Al aprobar se creará un registro inmutable para nóminas y contabilidad
+            </Text>
+          </View>
 
-          {/* Botón para devolver tarea */}
-          <TouchableOpacity 
-            style={styles.devolverButton} 
-            onPress={handleDevolverTarea}
-          >
-            <Text style={styles.devolverButtonText}>↩️ Devolver Tarea</Text>
-          </TouchableOpacity>
+          <View style={styles.secondaryActionWithIcon}>
+            <Ionicons name="arrow-undo-outline" size={22} color={HoffColors.textSecondary} />
+            <TaskSecondaryButton
+              label="Devolver tarea"
+              onPress={handleDevolverTarea}
+              style={styles.taskBtnFlex}
+            />
+          </View>
           <Text style={styles.devolverHelp}>
             Usa este botón si falta información o necesitas que corrijan algo
           </Text>
-        </View>
+        </TaskSection>
       )}
 
       {/* Modal para devolver tarea */}
@@ -660,53 +774,10 @@ export default function TareaDetalleScreen() {
                 style={styles.modalConfirmButton} 
                 onPress={confirmarDevolver}
               >
-                <Text style={styles.modalConfirmText}>↩️ Devolver</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Modal para marcar como pagado */}
-      <Modal
-        visible={showMarcarPagadoModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => {
-          setShowMarcarPagadoModal(false);
-          setReferenciaPago('');
-        }}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Marcar como Pagado</Text>
-            <Text style={styles.modalSubtitle}>
-              Opcional: Agrega una referencia de pago (número de transacción, cheque, etc.)
-            </Text>
-            
-            <TextInput
-              style={styles.mensajeInput}
-              placeholder="Ej: Transferencia #12345, Cheque #789..."
-              value={referenciaPago}
-              onChangeText={setReferenciaPago}
-            />
-            
-            <View style={styles.modalButtons}>
-              <TouchableOpacity 
-                style={styles.modalCancelButton}
-                onPress={() => {
-                  setShowMarcarPagadoModal(false);
-                  setReferenciaPago('');
-                }}
-              >
-                <Text style={styles.modalCancelText}>Cancelar</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.modalConfirmButton} 
-                onPress={confirmarMarcarPagado}
-              >
-                <Text style={styles.modalConfirmText}>💰 Marcar como Pagado</Text>
+                <View style={styles.modalConfirmInner}>
+                  <Ionicons name="arrow-undo-outline" size={18} color={HoffColors.white} />
+                  <Text style={styles.modalConfirmText}>Devolver</Text>
+                </View>
               </TouchableOpacity>
             </View>
           </View>
@@ -715,111 +786,78 @@ export default function TareaDetalleScreen() {
 
       {/* Información del registro permanente si está aprobada */}
       {aprobada && tarea.registro_aprobacion && (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>✅ Registro Permanente de Aprobación</Text>
+        <TaskSection title="Registro permanente de aprobación">
           
           <View style={[styles.infoBox, { backgroundColor: HoffColors.secondaryMuted }]}>
-            <Text style={[styles.infoBoxText, { color: HoffColors.primary }]}>
-              ✅ Tarea aprobada - Registro permanente creado
-            </Text>
+            <View style={styles.infoBoxInner}>
+              <Ionicons name="checkmark-circle-outline" size={22} color={HoffColors.primary} />
+              <Text style={[styles.infoBoxText, { color: HoffColors.primary }]}>
+                Tarea aprobada — registro permanente creado
+              </Text>
+            </View>
           </View>
           
           {/* Información de aprobación */}
           <View style={styles.aprobacionInfo}>
-            <View style={styles.aprobacionRow}>
-              <Text style={styles.aprobacionLabel}>📅 Aprobada el:</Text>
-              <Text style={styles.aprobacionValue}>
-                {new Date(tarea.registro_aprobacion.fecha_aprobacion).toLocaleDateString('es-ES', {
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit'
-                })}
-              </Text>
-            </View>
-            
-            <View style={styles.aprobacionRow}>
-              <Text style={styles.aprobacionLabel}>👤 Aprobada por:</Text>
-              <Text style={styles.aprobacionValue}>{tarea.registro_aprobacion.aprobado_por_nombre}</Text>
-            </View>
-            
+            <TaskDetailRow
+              icon="calendar-outline"
+              label="Aprobada el"
+              value={new Date(tarea.registro_aprobacion.fecha_aprobacion).toLocaleDateString('es-ES', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              })}
+            />
+            <TaskDetailRow
+              icon="person-outline"
+              label="Aprobada por"
+              value={tarea.registro_aprobacion.aprobado_por_nombre}
+            />
             {tarea.registro_aprobacion.notas_aprobacion && (
-              <View style={styles.aprobacionRow}>
-                <Text style={styles.aprobacionLabel}>📝 Notas:</Text>
-                <Text style={styles.aprobacionValue}>{tarea.registro_aprobacion.notas_aprobacion}</Text>
-              </View>
+              <TaskDetailRow
+                inline={false}
+                icon="document-text-outline"
+                label="Notas"
+                value={tarea.registro_aprobacion.notas_aprobacion}
+              />
             )}
           </View>
-          
-          {/* Estado de pago */}
-          <View style={styles.pagoSection}>
-            <Text style={styles.subsectionTitle}>💰 Estado de Pago</Text>
-            <View style={[
-              styles.pagoBox,
-              tarea.registro_aprobacion.estado_pago === 'pagado'
-                ? { backgroundColor: HoffColors.secondaryMuted, borderLeftColor: HoffColors.primary }
-                : { backgroundColor: HoffColors.background, borderLeftColor: HoffColors.accent }
-            ]}>
-              <Text style={[
-                styles.pagoEstado,
-                tarea.registro_aprobacion.estado_pago === 'pagado' && styles.pagoEstadoPagado
-              ]}>
-                {tarea.registro_aprobacion.estado_pago === 'pagado' ? '✅ Pagado' : '⏳ Pendiente'}
+
+          <View style={[styles.infoBox, { marginTop: 12 }]}>
+            <View style={styles.infoBoxInner}>
+              <Ionicons name="information-circle-outline" size={20} color={HoffColors.textSecondary} />
+              <Text style={[styles.infoBoxText, { color: HoffColors.textSecondary }]}>
+                El valor del servicio (€{parseFloat(tarea.valor_servicio).toFixed(2)}) queda contabilizado en Finanzas al aprobar la tarea.
               </Text>
-              
-              {tarea.registro_aprobacion.estado_pago === 'pagado' && (
-                <>
-                  {tarea.registro_aprobacion.fecha_pago && (
-                    <Text style={styles.pagoFecha}>
-                      Fecha de pago: {new Date(tarea.registro_aprobacion.fecha_pago).toLocaleDateString('es-ES')}
-                    </Text>
-                  )}
-                  {tarea.registro_aprobacion.referencia_pago && (
-                    <Text style={styles.pagoReferencia}>
-                      Referencia: {tarea.registro_aprobacion.referencia_pago}
-                    </Text>
-                  )}
-                </>
-              )}
             </View>
-            
-            {/* Botón para marcar como pagado (solo si está pendiente) */}
-            {tarea.registro_aprobacion.estado_pago === 'pendiente' && (
-              <TouchableOpacity 
-                style={styles.marcarPagadoButton}
-                onPress={handleMarcarComoPagado}
-              >
-                <Text style={styles.marcarPagadoButtonText}>💰 Marcar como Pagado</Text>
-              </TouchableOpacity>
-            )}
           </View>
           
           {/* Información de nómina */}
           <View style={styles.nominaSection}>
-            <Text style={styles.subsectionTitle}>📊 Información de Nómina</Text>
-            <View style={styles.nominaRow}>
-              <Text style={styles.nominaLabel}>📅 Período:</Text>
-              <Text style={styles.nominaValue}>
-                {tarea.registro_aprobacion.mes_nomina}/{tarea.registro_aprobacion.anio_nomina}
-              </Text>
-            </View>
-            <View style={styles.nominaRow}>
-              <Text style={styles.nominaLabel}>⏱️ Total horas:</Text>
-              <Text style={styles.nominaValue}>
-                {decimalATiempo(parseFloat(tarea.registro_aprobacion.total_horas_trabajadas))}
-              </Text>
-            </View>
-            <View style={styles.nominaRow}>
-              <Text style={styles.nominaLabel}>👥 Trabajadores:</Text>
-              <Text style={styles.nominaValue}>{tarea.registro_aprobacion.numero_trabajadores}</Text>
-            </View>
+            <Text style={styles.subsectionTitle}>Información de nómina</Text>
+            <TaskDetailRow
+              icon="calendar-outline"
+              label="Período"
+              value={`${tarea.registro_aprobacion.mes_nomina}/${tarea.registro_aprobacion.anio_nomina}`}
+            />
+            <TaskDetailRow
+              icon="timer-outline"
+              label="Total horas"
+              value={decimalATiempo(parseFloat(tarea.registro_aprobacion.total_horas_trabajadas))}
+            />
+            <TaskDetailRow
+              icon="people-outline"
+              label="Trabajadores"
+              value={String(tarea.registro_aprobacion.numero_trabajadores)}
+            />
           </View>
           
           {/* Horas aprobadas finales por trabajador */}
           {tarea.horas_aprobadas_finales && tarea.horas_aprobadas_finales.length > 0 && (
             <View style={styles.horasFinalesSection}>
-              <Text style={styles.subsectionTitle}>👷 Horas Aprobadas Finales</Text>
+              <Text style={styles.subsectionTitle}>Horas aprobadas finales</Text>
               {tarea.horas_aprobadas_finales.map((item: any) => (
                 <View key={item.trabajador_id} style={styles.horaFinalRow}>
                   <Text style={styles.horaFinalNombre}>{item.trabajador_nombre}:</Text>
@@ -830,26 +868,29 @@ export default function TareaDetalleScreen() {
               ))}
             </View>
           )}
-        </View>
+        </TaskSection>
       )}
 
       {/* Sección de cancelación */}
       {esCancelada && (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>❌ Tarea Cancelada</Text>
+        <TaskSection title="Tarea cancelada">
           
           <View style={[styles.infoBox, { backgroundColor: HoffColors.background }]}>
-            <Text style={[styles.infoBoxText, { color: HoffColors.accentDark }]}>
-              ❌ Esta tarea ha sido cancelada
-            </Text>
+            <View style={styles.infoBoxInner}>
+              <Ionicons name="close-circle-outline" size={22} color={HoffColors.accentDark} />
+              <Text style={[styles.infoBoxText, { color: HoffColors.accentDark }]}>
+                Esta tarea ha sido cancelada
+              </Text>
+            </View>
           </View>
           
           {/* Información de cancelación */}
           <View style={styles.cancelacionInfo}>
-            <View style={styles.cancelacionRow}>
-              <Text style={styles.cancelacionLabel}>📅 Cancelada el:</Text>
-              <Text style={styles.cancelacionValue}>
-                {tarea.ultima_actualizacion 
+            <TaskDetailRow
+              icon="calendar-outline"
+              label="Cancelada el"
+              value={
+                tarea.ultima_actualizacion 
                   ? new Date(tarea.ultima_actualizacion).toLocaleDateString('es-ES', {
                       year: 'numeric',
                       month: 'long',
@@ -857,127 +898,246 @@ export default function TareaDetalleScreen() {
                       hour: '2-digit',
                       minute: '2-digit'
                     })
-                  : 'Fecha no disponible'}
-              </Text>
-            </View>
-            
+                  : 'Fecha no disponible'
+              }
+            />
             {tarea.notas_internas && (
-              <View style={styles.cancelacionRow}>
-                <Text style={styles.cancelacionLabel}>📝 Notas:</Text>
-                <Text style={styles.cancelacionValue}>{tarea.notas_internas}</Text>
-              </View>
+              <TaskDetailRow
+                inline={false}
+                icon="document-text-outline"
+                label="Notas"
+                value={tarea.notas_internas}
+              />
             )}
           </View>
           
           <View style={[styles.infoBox, { backgroundColor: HoffColors.background, marginTop: 12 }]}>
-            <Text style={[styles.infoBoxText, { color: HoffColors.accentDark }]}>
-              ℹ️ Una tarea cancelada no puede ser modificada ni reactivada. Si necesitas realizar este trabajo, crea una nueva tarea.
-            </Text>
+            <View style={styles.infoBoxInner}>
+              <Ionicons name="information-circle-outline" size={20} color={HoffColors.accentDark} />
+              <Text style={[styles.infoBoxText, { color: HoffColors.accentDark }]}>
+                Una tarea cancelada no puede ser modificada ni reactivada. Si necesitas realizar este trabajo, crea una nueva tarea.
+              </Text>
+            </View>
           </View>
-        </View>
+        </TaskSection>
       )}
 
       {/* Notas internas (solo si no está cancelada) */}
       {tarea.notas_internas && !esCancelada && (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>📝 Notas Internas</Text>
+        <TaskSection title="Notas internas">
           <Text style={styles.notes}>{tarea.notas_internas}</Text>
-        </View>
+        </TaskSection>
       )}
 
       {/* Acciones para estado pendiente */}
       {esPendiente && (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>⚙️ Acciones</Text>
+        <TaskSection title="Acciones">
           
           {/* Asignar trabajadores */}
-          <TouchableOpacity style={styles.actionButton} onPress={handleAbrirAsignarModal}>
-            <Text style={styles.actionButtonText}>➕ Asignar Trabajador</Text>
-          </TouchableOpacity>
+          <View style={styles.primaryActionWithIcon}>
+            <Ionicons name="person-add-outline" size={22} color={HoffColors.primaryDark} />
+            <TaskPrimaryButton
+              label="Asignar trabajador"
+              onPress={handleAbrirAsignarModal}
+              style={styles.taskBtnFlex}
+            />
+          </View>
 
           {/* Desasignar trabajadores (si hay asignados) */}
           {tarea.trabajadores && tarea.trabajadores.length > 0 && (
             <>
               <Text style={styles.subsectionTitle}>Trabajadores asignados:</Text>
+              <Text style={styles.hoursHelp}>
+                Ajusta las horas por persona (como máximo la duración de la tarea) y pulsa Guardar.
+              </Text>
               {tarea.trabajadores.map((trabajador: any) => (
-                <View key={trabajador.id} style={styles.trabajadorAsignadoRow}>
-                  <Text style={styles.trabajadorAsignadoNombre}>
-                    👷 {trabajador.nombre}
-                    {trabajador.horas_asignadas && (
+                <View key={trabajador.id} style={styles.trabajadorAsignadoBlock}>
+                  <View style={styles.trabajadorAsignadoHeader}>
+                    <View style={{ flex: 1, paddingRight: 8 }}>
+                      <View style={styles.workerNameRow}>
+                        <Ionicons name="construct-outline" size={18} color={HoffColors.primary} />
+                        <Text style={styles.trabajadorAsignadoNombre}>{trabajador.nombre}</Text>
+                      </View>
                       <Text style={styles.trabajadorHoras}>
-                        {' '}({decimalATiempo(parseFloat(trabajador.horas_asignadas))})
+                        {trabajador.horas_asignadas
+                          ? `Asignadas: ${decimalATiempo(parseFloat(trabajador.horas_asignadas))}`
+                          : tarea.numero_horas
+                            ? `Por defecto: ${decimalATiempo(tarea.numero_horas)}`
+                            : 'Sin horas en tarea'}
                       </Text>
-                    )}
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.desasignarButton}
-                    onPress={() => handleDesasignarTrabajador(trabajador.id, trabajador.nombre)}
-                  >
-                    <Text style={styles.desasignarButtonText}>✖️</Text>
-                  </TouchableOpacity>
+                      <View style={styles.horasEdicionRow}>
+                        <TextInput
+                          style={styles.horasEdicionInput}
+                          value={horasTiempoPorTrabajador[trabajador.id] || '0:00'}
+                          onChangeText={(value) => updateHoras(trabajador.id, value)}
+                          keyboardType="default"
+                          placeholder="0:00"
+                        />
+                        <TouchableOpacity
+                          style={styles.guardarHorasButton}
+                          onPress={() => handleGuardarHorasAsignadas(trabajador.id)}
+                        >
+                          <Text style={styles.guardarHorasButtonText}>Guardar</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.desasignarButton}
+                      onPress={() => handleDesasignarTrabajador(trabajador.id, trabajador.nombre)}
+                      accessibilityLabel="Desasignar trabajador"
+                    >
+                      <Ionicons name="close-outline" size={24} color={HoffColors.accentDark} />
+                    </TouchableOpacity>
+                  </View>
                 </View>
               ))}
             </>
           )}
 
           {/* Editar tarea */}
-          <TouchableOpacity style={[styles.actionButton, styles.editButton]} onPress={handleEditarTarea}>
-            <Text style={styles.actionButtonText}>✏️ Editar Tarea</Text>
-          </TouchableOpacity>
+          <View style={styles.secondaryActionWithIcon}>
+            <Ionicons name="create-outline" size={22} color={HoffColors.textSecondary} />
+            <TaskSecondaryButton label="Editar tarea" onPress={handleEditarTarea} style={styles.taskBtnFlex} />
+          </View>
 
           {/* Cancelar tarea */}
           <TouchableOpacity style={[styles.actionButton, styles.cancelButton]} onPress={handleCancelarTarea}>
-            <Text style={[styles.actionButtonText, styles.cancelButtonText]}>❌ Cancelar Tarea</Text>
+            <View style={styles.destructiveRow}>
+              <Ionicons name="close-circle-outline" size={20} color={HoffColors.accentDark} />
+              <Text style={[styles.actionButtonText, styles.cancelButtonText]}>Cancelar tarea</Text>
+            </View>
           </TouchableOpacity>
-        </View>
+        </TaskSection>
       )}
 
       {/* Acciones para estado asignada */}
       {esAsignada && (
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>⚙️ Acciones</Text>
+        <TaskSection title="Acciones">
           
           {/* Asignar trabajadores adicionales */}
-          <TouchableOpacity style={styles.actionButton} onPress={handleAbrirAsignarModal}>
-            <Text style={styles.actionButtonText}>➕ Asignar Trabajador</Text>
-          </TouchableOpacity>
+          <View style={styles.primaryActionWithIcon}>
+            <Ionicons name="person-add-outline" size={22} color={HoffColors.primaryDark} />
+            <TaskPrimaryButton
+              label="Asignar trabajador"
+              onPress={handleAbrirAsignarModal}
+              style={styles.taskBtnFlex}
+            />
+          </View>
 
           {/* Desasignar trabajadores */}
           {tarea.trabajadores && tarea.trabajadores.length > 0 && (
             <>
               <Text style={styles.subsectionTitle}>Trabajadores asignados:</Text>
+              <Text style={styles.hoursHelp}>
+                Ajusta las horas por persona (como máximo la duración de la tarea) y pulsa Guardar.
+              </Text>
               {tarea.trabajadores.map((trabajador: any) => (
-                <View key={trabajador.id} style={styles.trabajadorAsignadoRow}>
-                  <Text style={styles.trabajadorAsignadoNombre}>
-                    👷 {trabajador.nombre}
-                    {trabajador.horas_asignadas && (
+                <View key={trabajador.id} style={styles.trabajadorAsignadoBlock}>
+                  <View style={styles.trabajadorAsignadoHeader}>
+                    <View style={{ flex: 1, paddingRight: 8 }}>
+                      <View style={styles.workerNameRow}>
+                        <Ionicons name="construct-outline" size={18} color={HoffColors.primary} />
+                        <Text style={styles.trabajadorAsignadoNombre}>{trabajador.nombre}</Text>
+                      </View>
                       <Text style={styles.trabajadorHoras}>
-                        {' '}({decimalATiempo(parseFloat(trabajador.horas_asignadas))})
+                        {trabajador.horas_asignadas
+                          ? `Asignadas: ${decimalATiempo(parseFloat(trabajador.horas_asignadas))}`
+                          : tarea.numero_horas
+                            ? `Por defecto: ${decimalATiempo(tarea.numero_horas)}`
+                            : 'Sin horas en tarea'}
                       </Text>
-                    )}
-                  </Text>
-                  <TouchableOpacity
-                    style={styles.desasignarButton}
-                    onPress={() => handleDesasignarTrabajador(trabajador.id, trabajador.nombre)}
-                  >
-                    <Text style={styles.desasignarButtonText}>✖️</Text>
-                  </TouchableOpacity>
+                      <View style={styles.horasEdicionRow}>
+                        <TextInput
+                          style={styles.horasEdicionInput}
+                          value={horasTiempoPorTrabajador[trabajador.id] || '0:00'}
+                          onChangeText={(value) => updateHoras(trabajador.id, value)}
+                          keyboardType="default"
+                          placeholder="0:00"
+                        />
+                        <TouchableOpacity
+                          style={styles.guardarHorasButton}
+                          onPress={() => handleGuardarHorasAsignadas(trabajador.id)}
+                        >
+                          <Text style={styles.guardarHorasButtonText}>Guardar</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                    <TouchableOpacity
+                      style={styles.desasignarButton}
+                      onPress={() => handleDesasignarTrabajador(trabajador.id, trabajador.nombre)}
+                      accessibilityLabel="Desasignar trabajador"
+                    >
+                      <Ionicons name="close-outline" size={24} color={HoffColors.accentDark} />
+                    </TouchableOpacity>
+                  </View>
                 </View>
               ))}
             </>
           )}
 
           {/* Editar tarea */}
-          <TouchableOpacity style={[styles.actionButton, styles.editButton]} onPress={handleEditarTarea}>
-            <Text style={styles.actionButtonText}>✏️ Editar Tarea</Text>
-          </TouchableOpacity>
+          <View style={styles.secondaryActionWithIcon}>
+            <Ionicons name="create-outline" size={22} color={HoffColors.textSecondary} />
+            <TaskSecondaryButton label="Editar tarea" onPress={handleEditarTarea} style={styles.taskBtnFlex} />
+          </View>
 
           {/* Cancelar tarea */}
           <TouchableOpacity style={[styles.actionButton, styles.cancelButton]} onPress={handleCancelarTarea}>
-            <Text style={[styles.actionButtonText, styles.cancelButtonText]}>❌ Cancelar Tarea</Text>
+            <View style={styles.destructiveRow}>
+              <Ionicons name="close-circle-outline" size={20} color={HoffColors.accentDark} />
+              <Text style={[styles.actionButtonText, styles.cancelButtonText]}>Cancelar tarea</Text>
+            </View>
           </TouchableOpacity>
-        </View>
+        </TaskSection>
       )}
+
+      {/* Modal confirmar desasignar trabajador */}
+      <Modal
+        visible={showDesasignarModal && desasignarTarget != null}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          if (desasignando) return;
+          cerrarModalDesasignar();
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Desasignar trabajador</Text>
+            {desasignarTarget ? (
+              <Text style={styles.modalSubtitle}>
+                ¿Seguro que quieres quitar a{' '}
+                <Text style={{ fontWeight: '700' }}>{desasignarTarget.nombre}</Text> de esta tarea? Dejará
+                de verla en su lista asignada.
+              </Text>
+            ) : null}
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalCancelButton, desasignando && styles.modalConfirmButtonDisabled]}
+                onPress={cerrarModalDesasignar}
+                disabled={desasignando}
+              >
+                <Text style={styles.modalCancelText}>Cancelar</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.modalDestructiveButton,
+                  desasignando && styles.modalConfirmButtonDisabled,
+                ]}
+                onPress={confirmarDesasignar}
+                disabled={desasignando}
+              >
+                {desasignando ? (
+                  <ActivityIndicator color={HoffColors.white} />
+                ) : (
+                  <Text style={styles.modalDestructiveText}>Desasignar</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Modal para asignar trabajador */}
       <Modal
@@ -985,6 +1145,7 @@ export default function TareaDetalleScreen() {
         transparent={true}
         animationType="slide"
         onRequestClose={() => {
+          if (savingAsignacion) return;
           setShowAsignarModal(false);
           setTrabajadorSeleccionado(null);
           setHorasAsignar('0:00');
@@ -993,7 +1154,10 @@ export default function TareaDetalleScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Asignar Trabajador</Text>
-            
+            <Text style={styles.modalDraftHint}>
+              Elige trabajador y horas aquí; los cambios se envían al servidor al pulsar Guardar. Cancelar cierra sin guardar.
+            </Text>
+
             {loadingTrabajadores ? (
               <ActivityIndicator size="large" color={HoffColors.primary} style={{ marginVertical: 20 }} />
             ) : trabajadores.length === 0 ? (
@@ -1035,30 +1199,39 @@ export default function TareaDetalleScreen() {
                   keyboardType="default"
                 />
                 <Text style={styles.helpText}>
-                  Si no especificas horas, se dividirán las horas estimadas entre los trabajadores
+                  Por defecto se usa la duración de la tarea para este trabajador. Puedes indicar menos horas si aplica (nunca más que la duración).
                 </Text>
               </>
             )}
             
             <View style={styles.modalButtons}>
               <TouchableOpacity 
-                style={styles.modalCancelButton} 
+                style={[styles.modalCancelButton, savingAsignacion && styles.modalConfirmButtonDisabled]} 
                 onPress={() => {
+                  if (savingAsignacion) return;
                   setShowAsignarModal(false);
                   setTrabajadorSeleccionado(null);
                   setHorasAsignar('0:00');
                 }}
+                disabled={savingAsignacion}
               >
                 <Text style={styles.modalCancelText}>Cancelar</Text>
               </TouchableOpacity>
               
               {!loadingTrabajadores && trabajadores.length > 0 && (
                 <TouchableOpacity 
-                  style={[styles.modalConfirmButton, !trabajadorSeleccionado && styles.modalConfirmButtonDisabled]} 
-                  onPress={handleAsignarTrabajador}
-                  disabled={!trabajadorSeleccionado}
+                  style={[
+                    styles.modalConfirmButton,
+                    (!trabajadorSeleccionado || savingAsignacion) && styles.modalConfirmButtonDisabled,
+                  ]} 
+                  onPress={handleGuardarAsignacion}
+                  disabled={!trabajadorSeleccionado || savingAsignacion}
                 >
-                  <Text style={styles.modalConfirmText}>Asignar</Text>
+                  {savingAsignacion ? (
+                    <ActivityIndicator color={HoffColors.white} />
+                  ) : (
+                    <Text style={styles.modalConfirmText}>Guardar</Text>
+                  )}
                 </TouchableOpacity>
               )}
             </View>
@@ -1066,6 +1239,7 @@ export default function TareaDetalleScreen() {
         </View>
       </Modal>
     </ScrollView>
+    </TaskScreenContainer>
   );
 }
 
@@ -1075,8 +1249,7 @@ const styles = StyleSheet.create({
     backgroundColor: HoffColors.background,
   },
   content: {
-    padding: 16,
-    paddingBottom: 100,
+    paddingBottom: taskSpacing.xl,
   },
   loadingContainer: {
     flex: 1,
@@ -1205,12 +1378,21 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
     marginTop: 8,
   },
   contactButtonText: {
     color: HoffColors.white,
     fontSize: 14,
     fontWeight: '600',
+  },
+  detailInlineRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
   },
   address: {
     fontSize: 15,
@@ -1228,11 +1410,24 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
   },
   mapsButtonText: {
     color: HoffColors.white,
     fontSize: 14,
     fontWeight: '600',
+  },
+  workerNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  tiempoServicioLabelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   dateRow: {
     marginBottom: 12,
@@ -1369,30 +1564,61 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
+  approveButtonDisabled: {
+    opacity: 0.65,
+  },
   approveButtonText: {
     color: HoffColors.white,
     fontSize: 16,
     fontWeight: 'bold',
   },
+  primaryActionWithIcon: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 12,
+  },
+  secondaryActionWithIcon: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 16,
+    marginBottom: 12,
+  },
+  taskBtnFlex: {
+    flex: 1,
+  },
+  warningInline: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 16,
+  },
   approvalWarning: {
+    flex: 1,
     fontSize: 12,
     color: HoffColors.accent,
-    textAlign: 'center',
     fontStyle: 'italic',
   },
   infoBox: {
     backgroundColor: HoffColors.secondaryMuted,
     padding: 16,
     borderRadius: 12,
-    alignItems: 'center',
+    alignItems: 'stretch',
     marginBottom: 12,
+  },
+  infoBoxInner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
   },
   infoBoxText: {
     color: HoffColors.accent,
     fontSize: 14,
     fontWeight: '600',
-    textAlign: 'center',
+    textAlign: 'left',
     lineHeight: 20,
+    flex: 1,
   },
   approvedDate: {
     fontSize: 13,
@@ -1412,10 +1638,17 @@ const styles = StyleSheet.create({
     borderLeftWidth: 4,
     borderLeftColor: HoffColors.accentDark,
   },
+  rechazoTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
   rechazoTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    marginBottom: 8,
+    marginBottom: 0,
+    flex: 1,
   },
   rechazoText: {
     fontSize: 14,
@@ -1472,6 +1705,12 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     textAlign: 'center',
   },
+  modalLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: HoffColors.textSecondary,
+    marginBottom: 8,
+  },
   mensajeInput: {
     backgroundColor: HoffColors.background,
     borderRadius: 8,
@@ -1498,6 +1737,13 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  modalDraftHint: {
+    fontSize: 13,
+    color: HoffColors.textSecondary,
+    lineHeight: 18,
+    marginBottom: 12,
+    marginTop: -4,
+  },
   modalConfirmButton: {
     flex: 1,
     backgroundColor: HoffColors.accent,
@@ -1505,7 +1751,28 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     alignItems: 'center',
   },
+  modalConfirmButtonDisabled: {
+    opacity: 0.5,
+  },
   modalConfirmText: {
+    color: HoffColors.white,
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  modalConfirmInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  modalDestructiveButton: {
+    flex: 1,
+    backgroundColor: '#B71C1C',
+    padding: 14,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  modalDestructiveText: {
     color: HoffColors.white,
     fontSize: 16,
     fontWeight: 'bold',
@@ -1568,51 +1835,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: HoffColors.text,
     flex: 1,
-  },
-  pagoSection: {
-    marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: HoffColors.border,
-  },
-  pagoBox: {
-    padding: 12,
-    borderRadius: 8,
-    borderLeftWidth: 4,
-    marginTop: 8,
-    marginBottom: 12,
-  },
-  pagoEstado: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: HoffColors.accent,
-    marginBottom: 8,
-  },
-  pagoEstadoPagado: {
-    color: HoffColors.primary,
-  },
-  pagoFecha: {
-    fontSize: 13,
-    color: HoffColors.textSecondary,
-    marginTop: 4,
-  },
-  pagoReferencia: {
-    fontSize: 13,
-    color: HoffColors.textSecondary,
-    marginTop: 4,
-    fontStyle: 'italic',
-  },
-  marcarPagadoButton: {
-    backgroundColor: HoffColors.primary,
-    padding: 14,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  marcarPagadoButtonText: {
-    color: HoffColors.white,
-    fontSize: 16,
-    fontWeight: 'bold',
   },
   nominaSection: {
     marginTop: 16,
@@ -1680,6 +1902,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  destructiveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    justifyContent: 'center',
+  },
   cancelButtonText: {
     color: HoffColors.accentDark,
   },
@@ -1693,6 +1921,46 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 8,
   },
+  trabajadorAsignadoBlock: {
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    backgroundColor: HoffColors.background,
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  trabajadorAsignadoHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  horasEdicionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 10,
+    gap: 8,
+  },
+  horasEdicionInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    fontSize: 15,
+    color: HoffColors.text,
+    backgroundColor: '#fff',
+  },
+  guardarHorasButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    backgroundColor: HoffColors.primary,
+    borderRadius: 8,
+  },
+  guardarHorasButtonText: {
+    color: HoffColors.white,
+    fontSize: 14,
+    fontWeight: '600',
+  },
   trabajadorAsignadoNombre: {
     fontSize: 15,
     fontWeight: '600',
@@ -1703,6 +1971,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: HoffColors.primary,
     fontWeight: 'normal',
+    marginTop: 4,
   },
   desasignarButton: {
     padding: 8,

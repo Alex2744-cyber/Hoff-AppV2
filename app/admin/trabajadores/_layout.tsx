@@ -20,7 +20,6 @@ export default function TrabajadoresLayout() {
         name="index"
         options={{
           title: 'Trabajadores',
-          headerShown: false,
         }}
       />
       <Stack.Screen
@@ -33,6 +32,12 @@ export default function TrabajadoresLayout() {
         name="estadisticas"
         options={{
           title: 'Estadísticas Detalladas',
+        }}
+      />
+      <Stack.Screen
+        name="crear"
+        options={{
+          title: 'Nuevo trabajador',
         }}
       />
     </Stack>

@@ -1,5 +1,6 @@
 import { Stack } from 'expo-router';
 import React from 'react';
+import { HoffColors } from '@/constants/theme';
 
 export default function TareasLayout() {
   return (
@@ -7,9 +8,9 @@ export default function TareasLayout() {
       screenOptions={{
         headerShown: true,
         headerStyle: {
-          backgroundColor: '#4CAF50',
+          backgroundColor: HoffColors.primary,
         },
-        headerTintColor: '#fff',
+        headerTintColor: HoffColors.white,
         headerTitleStyle: {
           fontWeight: 'bold',
         },

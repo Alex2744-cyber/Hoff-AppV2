@@ -1,5 +1,6 @@
 import { Stack } from 'expo-router';
 import React from 'react';
+import { HoffColors } from '@/constants/theme';
 
 export default function ClientesLayout() {
   return (
@@ -7,9 +8,9 @@ export default function ClientesLayout() {
       screenOptions={{
         headerShown: true,
         headerStyle: {
-          backgroundColor: '#2196F3',
+          backgroundColor: HoffColors.primary,
         },
-        headerTintColor: '#fff',
+        headerTintColor: HoffColors.white,
         headerTitleStyle: {
           fontWeight: 'bold',
         },
@@ -19,6 +20,12 @@ export default function ClientesLayout() {
         name="index"
         options={{
           title: 'Clientes',
+        }}
+      />
+      <Stack.Screen
+        name="detalle"
+        options={{
+          title: 'Cliente',
         }}
       />
       <Stack.Screen
@@ -33,7 +40,12 @@ export default function ClientesLayout() {
           title: 'Editar Cliente',
         }}
       />
+      <Stack.Screen
+        name="direcciones"
+        options={{
+          title: 'Direcciones',
+        }}
+      />
     </Stack>
   );
 }
-

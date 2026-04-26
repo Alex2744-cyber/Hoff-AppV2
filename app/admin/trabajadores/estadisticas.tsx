@@ -9,21 +9,23 @@ import {
   Alert,
   RefreshControl,
 } from 'react-native';
-import { useRouter, useLocalSearchParams } from 'expo-router';
-import api from '../../../services/api';
+import { useLocalSearchParams } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import api from '@/services/api';
 import { decimalATiempo } from '@/utils/tareas';
+import { HoffColors } from '@/constants/theme';
+import { taskSpacing, taskRadius, taskShadowCard } from '@/constants/taskUi';
+import { TaskScreenContainer } from '@/components/tareas/TaskScreenContainer';
 
 export default function EstadisticasTrabajadorScreen() {
-  const router = useRouter();
-  const { id, nombre } = useLocalSearchParams();
-  
+  const { id } = useLocalSearchParams();
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [horasAprobadas, setHorasAprobadas] = useState<any[]>([]);
   const [totalHorasAprobadas, setTotalHorasAprobadas] = useState(0);
   const [tareasAprobadas, setTareasAprobadas] = useState<any[]>([]);
   const [totalTareasAprobadas, setTotalTareasAprobadas] = useState(0);
-  const [mes, setMes] = useState(new Date().getMonth() + 1); // 1-12
+  const [mes, setMes] = useState(new Date().getMonth() + 1);
   const [anio, setAnio] = useState(new Date().getFullYear());
 
   useEffect(() => {
@@ -33,19 +35,18 @@ export default function EstadisticasTrabajadorScreen() {
   const loadEstadisticas = async () => {
     try {
       setLoading(true);
-      
-      // Cargar horas aprobadas (desde detalle_horas_aprobadas)
+
       const responseHoras = await api.getHorasTrabajadas(Number(id), mes, anio);
       if (responseHoras.success && responseHoras.data) {
-        setHorasAprobadas(responseHoras.data);
-        setTotalHorasAprobadas(responseHoras.total_horas || 0);
+        const extra = responseHoras as typeof responseHoras & { total_horas?: number };
+        setTotalHorasAprobadas(extra.total_horas ?? 0);
       }
-      
-      // Cargar tareas aprobadas (resumen por tarea)
+
       const responseTareas = await api.getTareasAprobadas(Number(id), mes, anio);
       if (responseTareas.success && responseTareas.data) {
         setTareasAprobadas(responseTareas.data);
-        setTotalTareasAprobadas(responseTareas.total_tareas || 0);
+        const extraT = responseTareas as typeof responseTareas & { total_tareas?: number };
+        setTotalTareasAprobadas(extraT.total_tareas ?? 0);
       }
     } catch (error: any) {
       Alert.alert('Error', 'No se pudieron cargar las estadísticas');
@@ -61,18 +62,19 @@ export default function EstadisticasTrabajadorScreen() {
   };
 
   const meses = [
-    'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+    'Enero',
+    'Febrero',
+    'Marzo',
+    'Abril',
+    'Mayo',
+    'Junio',
+    'Julio',
+    'Agosto',
+    'Septiembre',
+    'Octubre',
+    'Noviembre',
+    'Diciembre',
   ];
-
-  const getAniosDisponibles = () => {
-    const anioActual = new Date().getFullYear();
-    const anios = [];
-    for (let i = anioActual; i >= anioActual - 5; i--) {
-      anios.push(i);
-    }
-    return anios;
-  };
 
   const cambiarMes = (direccion: 'anterior' | 'siguiente') => {
     if (direccion === 'anterior') {
@@ -94,253 +96,271 @@ export default function EstadisticasTrabajadorScreen() {
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#2196F3" />
-        <Text style={styles.loadingText}>Cargando estadísticas...</Text>
-      </View>
+      <TaskScreenContainer>
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" color={HoffColors.primary} />
+          <Text style={styles.loadingText}>Cargando estadísticas...</Text>
+        </View>
+      </TaskScreenContainer>
     );
   }
 
   return (
-    <ScrollView 
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
-    >
-      {/* Filtros de fecha */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>📅 Filtrar por Período</Text>
-        
-        <View style={styles.filtersRow}>
-          <TouchableOpacity
-            style={styles.filterButton}
-            onPress={() => cambiarMes('anterior')}
-          >
-            <Text style={styles.filterButtonText}>←</Text>
-          </TouchableOpacity>
-          
-          <View style={styles.filtersContainer}>
-            <View style={styles.filterGroup}>
-              <Text style={styles.filterLabel}>Mes</Text>
-              <View style={styles.filterValueContainer}>
-                <Text style={styles.filterValue}>{meses[mes - 1]}</Text>
-              </View>
-            </View>
-            
-            <View style={styles.filterGroup}>
-              <Text style={styles.filterLabel}>Año</Text>
-              <View style={styles.filterValueContainer}>
-                <Text style={styles.filterValue}>{anio}</Text>
-              </View>
-            </View>
+    <TaskScreenContainer>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={HoffColors.primary}
+            colors={[HoffColors.primary]}
+          />
+        }
+      >
+        <View style={styles.card}>
+          <View style={styles.sectionTitleRow}>
+            <Ionicons name="calendar-outline" size={20} color={HoffColors.primary} />
+            <Text style={styles.sectionTitle}>Filtrar por período</Text>
           </View>
-          
+
+          <View style={styles.filtersRow}>
+            <TouchableOpacity
+              style={styles.filterButton}
+              onPress={() => cambiarMes('anterior')}
+              accessibilityLabel="Mes anterior"
+            >
+              <Ionicons name="chevron-back" size={22} color={HoffColors.white} />
+            </TouchableOpacity>
+
+            <View style={styles.filtersContainer}>
+              <View style={styles.filterGroup}>
+                <Text style={styles.filterLabel}>Mes</Text>
+                <View style={styles.filterValueContainer}>
+                  <Text style={styles.filterValue}>{meses[mes - 1]}</Text>
+                </View>
+              </View>
+
+              <View style={styles.filterGroup}>
+                <Text style={styles.filterLabel}>Año</Text>
+                <View style={styles.filterValueContainer}>
+                  <Text style={styles.filterValue}>{anio}</Text>
+                </View>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={styles.filterButton}
+              onPress={() => cambiarMes('siguiente')}
+              accessibilityLabel="Mes siguiente"
+            >
+              <Ionicons name="chevron-forward" size={22} color={HoffColors.white} />
+            </TouchableOpacity>
+          </View>
+
           <TouchableOpacity
-            style={styles.filterButton}
-            onPress={() => cambiarMes('siguiente')}
+            style={styles.resetButton}
+            onPress={() => {
+              const ahora = new Date();
+              setMes(ahora.getMonth() + 1);
+              setAnio(ahora.getFullYear());
+            }}
           >
-            <Text style={styles.filterButtonText}>→</Text>
+            <Ionicons name="today-outline" size={18} color={HoffColors.primary} style={styles.resetIcon} />
+            <Text style={styles.resetButtonText}>Mes actual</Text>
           </TouchableOpacity>
         </View>
 
-        <TouchableOpacity
-          style={styles.resetButton}
-          onPress={() => {
-            const ahora = new Date();
-            setMes(ahora.getMonth() + 1);
-            setAnio(ahora.getFullYear());
-          }}
-        >
-          <Text style={styles.resetButtonText}>📅 Mes Actual</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Resumen del período */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>📊 Resumen del Período</Text>
-        
-        <View style={styles.resumenRow}>
-          <View style={styles.resumenItem}>
-            <Text style={styles.resumenValue}>{totalTareasAprobadas}</Text>
-            <Text style={styles.resumenLabel}>Tareas Aprobadas</Text>
+        <View style={styles.card}>
+          <View style={styles.sectionTitleRow}>
+            <Ionicons name="pie-chart-outline" size={20} color={HoffColors.primary} />
+            <Text style={styles.sectionTitle}>Resumen del período</Text>
           </View>
-          <View style={styles.resumenItem}>
-            <Text style={styles.resumenValue}>
-              {decimalATiempo(totalHorasAprobadas)}
-            </Text>
-            <Text style={styles.resumenLabel}>Horas Aprobadas</Text>
+
+          <View style={styles.resumenRow}>
+            <View style={styles.resumenItem}>
+              <Text style={styles.resumenValue}>{totalTareasAprobadas}</Text>
+              <Text style={styles.resumenLabel}>Tareas aprobadas</Text>
+            </View>
+            <View style={styles.resumenItem}>
+              <Text style={styles.resumenValue}>{decimalATiempo(totalHorasAprobadas)}</Text>
+              <Text style={styles.resumenLabel}>Horas aprobadas</Text>
+            </View>
           </View>
         </View>
-      </View>
 
-      {/* Lista detallada de tareas aprobadas */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>✅ Tareas Aprobadas del Mes</Text>
-        
-        {tareasAprobadas.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>
-              No hay tareas aprobadas para {meses[mes - 1]} {anio}
-            </Text>
+        <View style={styles.card}>
+          <View style={styles.sectionTitleRow}>
+            <Ionicons name="checkmark-circle-outline" size={20} color={HoffColors.primary} />
+            <Text style={styles.sectionTitle}>Tareas aprobadas del mes</Text>
           </View>
-        ) : (
-          tareasAprobadas.map((tarea, index) => (
-            <View key={index} style={styles.registroItem}>
-              <View style={styles.registroHeader}>
-                <Text style={styles.registroFecha}>
-                  {new Date(tarea.fecha_realizacion).toLocaleDateString('es-ES', {
-                    day: '2-digit',
-                    month: 'short',
-                    year: 'numeric'
-                  })}
-                </Text>
-                <Text style={styles.registroHoras}>
-                  {decimalATiempo(parseFloat(tarea.horas_trabajadas))}
-                </Text>
-              </View>
-              
-              <Text style={styles.registroTarea} numberOfLines={2}>
-                {tarea.tarea_descripcion || 'Sin descripción'}
+
+          {tareasAprobadas.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>
+                No hay tareas aprobadas para {meses[mes - 1]} {anio}
               </Text>
-              
-              <Text style={styles.registroCliente}>
-                👤 {tarea.cliente_nombre || 'Cliente no disponible'}
-              </Text>
-              
-              <View style={styles.estadoPagoContainer}>
-                <Text style={[
-                  styles.estadoPago,
-                  tarea.estado_pago === 'pagado' ? styles.estadoPagoPagado : styles.estadoPagoPendiente
-                ]}>
-                  {tarea.estado_pago === 'pagado' ? '✅ Pagado' : '⏳ Pendiente'}
-                </Text>
-              </View>
-              
-              {tarea.descripcion_horas && (
-                <Text style={styles.registroNotas} numberOfLines={2}>
-                  📝 {tarea.descripcion_horas}
-                </Text>
-              )}
             </View>
-          ))
-        )}
-      </View>
-    </ScrollView>
+          ) : (
+            tareasAprobadas.map((tarea, index) => (
+              <View key={index} style={styles.registroItem}>
+                <View style={styles.registroHeader}>
+                  <Text style={styles.registroFecha}>
+                    {new Date(tarea.fecha_realizacion).toLocaleDateString('es-ES', {
+                      day: '2-digit',
+                      month: 'short',
+                      year: 'numeric',
+                    })}
+                  </Text>
+                  <Text style={styles.registroHoras}>{decimalATiempo(parseFloat(tarea.horas_trabajadas))}</Text>
+                </View>
+
+                <Text style={styles.registroTarea} numberOfLines={2}>
+                  {tarea.tarea_descripcion || 'Sin descripción'}
+                </Text>
+
+                <View style={styles.registroMetaRow}>
+                  <Ionicons name="person-outline" size={14} color={HoffColors.textMuted} />
+                  <Text style={styles.registroCliente}>{tarea.cliente_nombre || 'Cliente no disponible'}</Text>
+                </View>
+
+                {tarea.descripcion_horas ? (
+                  <View style={styles.registroNotasRow}>
+                    <Ionicons name="document-text-outline" size={14} color={HoffColors.textMuted} />
+                    <Text style={styles.registroNotas} numberOfLines={2}>
+                      {tarea.descripcion_horas}
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+            ))
+          )}
+        </View>
+      </ScrollView>
+    </TaskScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: HoffColors.background,
   },
   content: {
-    padding: 16,
-    paddingBottom: 100,
+    paddingBottom: taskSpacing.xxl,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    minHeight: 200,
   },
   loadingText: {
-    marginTop: 12,
+    marginTop: taskSpacing.md,
     fontSize: 16,
-    color: '#666',
+    color: HoffColors.textSecondary,
   },
   card: {
-    backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
+    backgroundColor: HoffColors.surface,
+    borderRadius: taskRadius.lg,
+    padding: taskSpacing.lg,
+    marginBottom: taskSpacing.lg,
+    borderWidth: 1,
+    borderColor: HoffColors.border,
+    ...taskShadowCard,
+  },
+  sectionTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: taskSpacing.sm,
+    marginBottom: taskSpacing.md,
   },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
-    marginBottom: 12,
+    color: HoffColors.text,
   },
   filtersRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-    marginBottom: 12,
+    gap: taskSpacing.md,
+    marginBottom: taskSpacing.md,
   },
   filterButton: {
     width: 40,
     height: 40,
-    borderRadius: 8,
-    backgroundColor: '#2196F3',
+    borderRadius: taskRadius.sm,
+    backgroundColor: HoffColors.primary,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  filterButtonText: {
-    fontSize: 20,
-    color: '#fff',
-    fontWeight: 'bold',
   },
   filtersContainer: {
     flex: 1,
     flexDirection: 'row',
-    gap: 12,
+    gap: taskSpacing.md,
   },
   filterGroup: {
     flex: 1,
   },
   filterLabel: {
     fontSize: 12,
-    color: '#666',
-    marginBottom: 4,
+    color: HoffColors.textSecondary,
+    marginBottom: taskSpacing.xs,
   },
   filterValueContainer: {
-    backgroundColor: '#f5f5f5',
-    borderRadius: 8,
-    padding: 12,
+    backgroundColor: HoffColors.background,
+    borderRadius: taskRadius.sm,
+    padding: taskSpacing.md,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: HoffColors.border,
   },
   filterValue: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#333',
+    color: HoffColors.text,
   },
   resetButton: {
-    backgroundColor: '#f5f5f5',
-    padding: 12,
-    borderRadius: 8,
+    backgroundColor: HoffColors.background,
+    padding: taskSpacing.md,
+    borderRadius: taskRadius.sm,
     alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: HoffColors.border,
+  },
+  resetIcon: {
+    marginRight: taskSpacing.xs,
   },
   resetButtonText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#2196F3',
+    color: HoffColors.primary,
   },
   resumenRow: {
     flexDirection: 'row',
-    gap: 16,
+    gap: taskSpacing.lg,
   },
   resumenItem: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
-    borderRadius: 8,
-    padding: 16,
+    backgroundColor: HoffColors.background,
+    borderRadius: taskRadius.sm,
+    padding: taskSpacing.lg,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: HoffColors.border,
   },
   resumenValue: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#2196F3',
-    marginBottom: 4,
+    color: HoffColors.primary,
+    marginBottom: taskSpacing.xs,
   },
   resumenLabel: {
     fontSize: 12,
-    color: '#666',
+    color: HoffColors.textSecondary,
     textAlign: 'center',
   },
   emptyContainer: {
@@ -349,68 +369,59 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 14,
-    color: '#999',
+    color: HoffColors.textMuted,
     textAlign: 'center',
   },
   registroItem: {
-    padding: 12,
+    padding: taskSpacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: '#f0f0f0',
+    borderBottomColor: HoffColors.border,
   },
   registroHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: taskSpacing.sm,
   },
   registroFecha: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#333',
+    color: HoffColors.text,
   },
   registroHoras: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#2196F3',
+    color: HoffColors.primary,
   },
   registroTarea: {
     fontSize: 14,
-    color: '#666',
-    marginBottom: 4,
+    color: HoffColors.textSecondary,
+    marginBottom: taskSpacing.xs,
+  },
+  registroMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: taskSpacing.xs,
+    marginTop: taskSpacing.xs,
   },
   registroCliente: {
     fontSize: 12,
-    color: '#999',
-    marginTop: 4,
+    color: HoffColors.textMuted,
+    flex: 1,
+  },
+  registroNotasRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: taskSpacing.xs,
+    marginTop: taskSpacing.xs,
+    paddingLeft: taskSpacing.xs,
+    borderLeftWidth: 2,
+    borderLeftColor: HoffColors.border,
   },
   registroNotas: {
     fontSize: 12,
-    color: '#666',
+    color: HoffColors.textSecondary,
     fontStyle: 'italic',
-    marginTop: 4,
-    paddingLeft: 8,
-    borderLeftWidth: 2,
-    borderLeftColor: '#e0e0e0',
-  },
-  estadoPagoContainer: {
-    marginTop: 8,
-  },
-  estadoPago: {
-    fontSize: 12,
-    fontWeight: '600',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 4,
-    alignSelf: 'flex-start',
-  },
-  estadoPagoPagado: {
-    backgroundColor: '#E8F5E9',
-    color: '#2E7D32',
-  },
-  estadoPagoPendiente: {
-    backgroundColor: '#FFF3E0',
-    color: '#E65100',
+    flex: 1,
   },
 });
-
-

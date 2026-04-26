@@ -1,68 +1,73 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
+import { HoffColors } from '@/constants/theme';
+import { taskSpacing } from '@/constants/taskUi';
+import { TaskScreenContainer, TaskHubLinkRow } from '@/components/tareas';
 
 export default function TareasMenuScreen() {
   const router = useRouter();
 
   return (
-    <View style={styles.container}>
-      <View style={styles.buttonsContainer}>
-        <TouchableOpacity
-          style={styles.button}
-          onPress={() => router.push('/worker/tareas/lista')}
-        >
-          <Text style={styles.buttonText}>Ver Tareas</Text>
-        </TouchableOpacity>
+    <TaskScreenContainer>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.header}>
+          <Text style={styles.heading}>Mis tareas</Text>
+          <Text style={styles.lead}>Consulta lo asignado, el estado y el historial.</Text>
+        </View>
 
-        <TouchableOpacity
-          style={[styles.button, styles.buttonSecondary]}
-          onPress={() => router.push('/worker/tareas/completadas')}
-        >
-          <Text style={styles.buttonText}>Tareas Completadas</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.button, styles.buttonSuccess]}
-          onPress={() => router.push('/worker/tareas/realizados')}
-        >
-          <Text style={styles.buttonText}>Trabajos Realizados</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+        <View style={styles.list}>
+          <TaskHubLinkRow
+            title="Ver tareas"
+            subtitle="Pendientes y asignadas a ti"
+            icon="clipboard-outline"
+            emphasize
+            onPress={() => router.push('/worker/tareas/lista')}
+          />
+          <TaskHubLinkRow
+            title="Completadas"
+            subtitle="En revisión o devueltas por el administrador"
+            icon="hourglass-outline"
+            onPress={() => router.push('/worker/tareas/completadas')}
+          />
+          <TaskHubLinkRow
+            title="Trabajos realizados"
+            subtitle="Tareas ya aprobadas"
+            icon="checkmark-done-outline"
+            onPress={() => router.push('/worker/tareas/realizados')}
+          />
+        </View>
+      </ScrollView>
+    </TaskScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
+  scrollContent: {
+    flexGrow: 1,
+    paddingTop: taskSpacing.sm,
+    paddingBottom: taskSpacing.xl,
   },
-  buttonsContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
-    gap: 16,
+  header: {
+    marginBottom: taskSpacing.xl,
   },
-  button: {
-    backgroundColor: '#4CAF50',
-    paddingVertical: 16,
-    paddingHorizontal: 40,
-    borderRadius: 12,
-    minWidth: 180,
-    alignItems: 'center',
+  heading: {
+    fontSize: 26,
+    fontWeight: '800',
+    color: HoffColors.primary,
+    letterSpacing: -0.3,
   },
-  buttonText: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '600',
+  lead: {
+    marginTop: taskSpacing.sm,
+    fontSize: 15,
+    lineHeight: 22,
+    color: HoffColors.textSecondary,
   },
-  buttonSecondary: {
-    backgroundColor: '#9C27B0',
-  },
-  buttonSuccess: {
-    backgroundColor: '#4CAF50',
+  list: {
+    gap: taskSpacing.md,
   },
 });
-

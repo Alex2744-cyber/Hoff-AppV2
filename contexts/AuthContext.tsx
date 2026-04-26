@@ -1,6 +1,13 @@
-import React, { createContext, useState, useContext, useEffect, ReactNode } from 'react';
+import React, { createContext, useState, useContext, useEffect, useCallback, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import api, { User, LoginResponse } from '../services/api';
+import api, {
+  User,
+  setUnauthorizedHandler,
+  setStoredAuthToken,
+  getStoredAuthToken,
+  clearAuthSession,
+  AUTH_TOKEN_KEY,
+} from '../services/api';
 
 interface AuthContextType {
   user: User | null;
@@ -8,6 +15,10 @@ interface AuthContextType {
   login: (usuario: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   isAuthenticated: boolean;
+  /** Actualiza usuario en memoria y AsyncStorage (p. ej. tras guardar perfil). */
+  applySessionUser: (u: User) => Promise<void>;
+  /** Recarga perfil desde GET /auth/me. */
+  refreshUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -16,7 +27,13 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Cargar usuario al iniciar
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setUser(null);
+    });
+    return () => setUnauthorizedHandler(null);
+  }, []);
+
   useEffect(() => {
     loadUser();
   }, []);
@@ -24,8 +41,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const loadUser = async () => {
     try {
       const userData = await AsyncStorage.getItem('user');
-      if (userData) {
+      const token = await getStoredAuthToken();
+      if (userData && token) {
         setUser(JSON.parse(userData));
+      } else {
+        if (userData || token) {
+          await AsyncStorage.multiRemove(['user', AUTH_TOKEN_KEY]);
+        }
+        setUser(null);
       }
     } catch (error) {
       console.error('Error cargando usuario:', error);
@@ -39,7 +62,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       const result = await api.login(usuario, password);
 
-      if (result.success && result.user) {
+      if (result.success && result.user && result.token) {
+        await setStoredAuthToken(result.token);
         setUser(result.user);
         await AsyncStorage.setItem('user', JSON.stringify(result.user));
         return true;
@@ -55,8 +79,26 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const logout = async () => {
     setUser(null);
-    await AsyncStorage.removeItem('user');
+    await clearAuthSession();
   };
+
+  const applySessionUser = useCallback(async (u: User) => {
+    setUser(u);
+    await AsyncStorage.setItem('user', JSON.stringify(u));
+  }, []);
+
+  const refreshUser = useCallback(async () => {
+    const token = await getStoredAuthToken();
+    if (!token) return;
+    try {
+      const res = await api.getAuthMe();
+      if (res.success && res.data) {
+        await applySessionUser(res.data);
+      }
+    } catch {
+      /* silencioso; 401 ya limpia sesión vía apiRequest */
+    }
+  }, [applySessionUser]);
 
   const value = {
     user,
@@ -64,6 +106,8 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     login,
     logout,
     isAuthenticated: !!user,
+    applySessionUser,
+    refreshUser,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -76,4 +120,3 @@ export const useAuth = () => {
   }
   return context;
 };
-

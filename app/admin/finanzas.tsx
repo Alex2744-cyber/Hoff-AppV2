@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -7,6 +8,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   Alert,
+  TouchableOpacity,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import api from '@/services/api';
@@ -14,19 +16,56 @@ import { HoffColors } from '@/constants/theme';
 
 interface IngresosTotales {
   ingresos_totales: number;
-  total_tareas_pagadas: number;
+  total_tareas_aprobadas: number;
+}
+
+/** Respuestas JSON pueden traer DECIMAL como string; mysql/serialización a veces usa bigint */
+function parseApiNumber(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === 'bigint') return Number(value);
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  const s = String(value).trim().replace(',', '.');
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function parseApiInt(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === 'bigint') return Number(value);
+  if (typeof value === 'number') return Number.isFinite(value) ? Math.trunc(value) : 0;
+  const n = parseInt(String(value).trim(), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function normalizarIngresosPayload(raw: Record<string, unknown> | undefined): IngresosTotales | null {
+  if (!raw) return null;
+  const nested = raw.data;
+  const src =
+    nested && typeof nested === 'object' && !Array.isArray(nested)
+      ? (nested as Record<string, unknown>)
+      : raw;
+  const ing = parseApiNumber(src.ingresos_totales);
+  const totalRaw = src.total_tareas_aprobadas ?? src.total_tareas_pagadas;
+  const total = parseApiInt(totalRaw);
+  return {
+    ingresos_totales: ing,
+    total_tareas_aprobadas: total,
+  };
 }
 
 export default function FinanzasScreen() {
   const [ingresos, setIngresos] = useState<IngresosTotales | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
 
-  const cargarIngresos = async () => {
+  const cargarIngresos = useCallback(async () => {
     try {
       const response = await api.finanzas.getIngresosTotales();
       if (response.success && response.data) {
-        setIngresos(response.data);
+        const n = normalizarIngresosPayload(response.data as Record<string, unknown>);
+        if (n) setIngresos(n);
+        else setIngresos(null);
       } else {
         Alert.alert('Error', response.error || 'Error al cargar ingresos');
       }
@@ -37,11 +76,13 @@ export default function FinanzasScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  };
-
-  useEffect(() => {
-    cargarIngresos();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      cargarIngresos();
+    }, [cargarIngresos])
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -85,7 +126,7 @@ export default function FinanzasScreen() {
           <Ionicons name="wallet-outline" size={28} color={HoffColors.white} style={styles.headerIcon} />
           <Text style={styles.headerTitle}>Finanzas</Text>
         </View>
-        <Text style={styles.headerSubtitle}>Ingresos de tareas pagadas</Text>
+        <Text style={styles.headerSubtitle}>Ingresos por tareas aprobadas</Text>
       </View>
 
       <View style={styles.mainCard}>
@@ -95,15 +136,36 @@ export default function FinanzasScreen() {
         </Text>
         <View style={styles.divider} />
         <Text style={styles.cardSubtext}>
-          {ingresos.total_tareas_pagadas} tarea{ingresos.total_tareas_pagadas !== 1 ? 's' : ''} pagada{ingresos.total_tareas_pagadas !== 1 ? 's' : ''}
+          {ingresos.total_tareas_aprobadas} tarea{ingresos.total_tareas_aprobadas !== 1 ? 's' : ''} en registro permanente
         </Text>
       </View>
 
-      <View style={styles.infoBox}>
-        <Text style={styles.infoIcon}>ℹ️</Text>
-        <Text style={styles.infoText}>
-          Este monto representa la suma de todas las tareas aprobadas que han sido marcadas como pagadas.
-        </Text>
+      <View style={styles.infoSection}>
+        <TouchableOpacity
+          style={styles.infoToggleButton}
+          onPress={() => setShowInfo((prev) => !prev)}
+          accessibilityRole="button"
+          accessibilityLabel={showInfo ? 'Ocultar información de ingresos' : 'Mostrar información de ingresos'}
+        >
+          <View style={styles.infoToggleLeft}>
+            <Ionicons name="information-circle-outline" size={18} color={HoffColors.primary} />
+            <Text style={styles.infoToggleText}>Más información</Text>
+          </View>
+          <Ionicons
+            name={showInfo ? 'chevron-up-outline' : 'chevron-down-outline'}
+            size={18}
+            color={HoffColors.primary}
+          />
+        </TouchableOpacity>
+
+        {showInfo && (
+          <View style={styles.infoBox}>
+            <Text style={styles.infoText}>
+              La suma del valor del servicio de cada tarea se consolida cuando la tarea queda aprobada en
+              el registro permanente. Este resumen no contempla cobros manuales externos.
+            </Text>
+          </View>
+        )}
       </View>
     </ScrollView>
   );
@@ -190,22 +252,40 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: HoffColors.textMuted,
   },
-  infoBox: {
+  infoSection: {
+    marginHorizontal: 20,
+    marginBottom: 24,
+  },
+  infoToggleButton: {
+    backgroundColor: HoffColors.surface,
+    borderWidth: 1,
+    borderColor: HoffColors.border,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  infoToggleLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  infoToggleText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: HoffColors.primary,
+  },
+  infoBox: {
+    marginTop: 10,
     backgroundColor: HoffColors.secondaryMuted,
-    margin: 20,
-    marginTop: 0,
     padding: 16,
     borderRadius: 12,
-    alignItems: 'flex-start',
     borderLeftWidth: 4,
     borderLeftColor: HoffColors.primary,
   },
-  infoIcon: {
-    marginRight: 12,
-  },
   infoText: {
-    flex: 1,
     fontSize: 14,
     color: HoffColors.primaryDark,
     lineHeight: 20,

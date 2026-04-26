@@ -2,18 +2,15 @@
  * Helpers compartidos para pantallas de tareas (admin y worker).
  */
 
+import { detalleEstadoPillColor } from '@/constants/taskEstadoColors';
+
 export function getEstadoColor(estado: string): string {
-  if (estado === 'aprobada') return '#4CAF50';
-  if (estado === 'completada') return '#9C27B0';
-  if (estado === 'asignada') return '#2196F3';
-  if (estado === 'pendiente') return '#FF9800';
-  if (estado === 'cancelada') return '#757575';
-  return '#9E9E9E';
+  return detalleEstadoPillColor(estado);
 }
 
 export function getEstadoText(estado: string): string {
-  if (estado === 'aprobada') return 'Aprobada ✅';
-  if (estado === 'completada') return 'En revisión 👀';
+  if (estado === 'aprobada') return 'Aprobada';
+  if (estado === 'completada') return 'En revisión';
   if (estado === 'asignada') return 'Asignada';
   if (estado === 'pendiente') return 'Pendiente';
   if (estado === 'cancelada') return 'Cancelada';
@@ -30,4 +27,40 @@ export function decimalATiempo(decimal: number): string {
   const minutosFinal = minutos % 60;
 
   return `${horasFinal}:${minutosFinal.toString().padStart(2, '0')}`;
+}
+
+/** Convierte texto HH:MM (o decimal sin ":") a horas en decimal. */
+export function tiempoADecimal(tiempo: string): number {
+  if (!tiempo || !tiempo.trim()) return 0;
+
+  if (!tiempo.includes(':')) {
+    const decimal = parseFloat(tiempo);
+    return isNaN(decimal) ? 0 : decimal;
+  }
+
+  const partes = tiempo.split(':');
+  if (partes.length !== 2) return 0;
+
+  const horas = parseInt(partes[0], 10);
+  const minutos = parseInt(partes[1], 10);
+
+  if (isNaN(horas) || isNaN(minutos)) return 0;
+
+  return horas + minutos / 60;
+}
+
+/** Vacío es válido (opcional). Acepta decimal sin ":" o HH:MM. */
+export function validarFormatoTiempo(tiempo: string): boolean {
+  if (!tiempo || !tiempo.trim()) return true;
+
+  if (!tiempo.includes(':')) {
+    const decimal = parseFloat(tiempo);
+    return !isNaN(decimal) && decimal >= 0;
+  }
+
+  const regex = /^(\d{1,2}):([0-5]?\d)$/;
+  if (!regex.test(tiempo)) return false;
+
+  const [horas, minutos] = tiempo.split(':').map(Number);
+  return horas >= 0 && horas < 1000 && minutos >= 0 && minutos < 60;
 }
