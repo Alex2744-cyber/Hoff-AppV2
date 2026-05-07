@@ -6,7 +6,6 @@ import {
   ScrollView,
   TextInput,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
   Modal,
   FlatList,
@@ -17,7 +16,7 @@ import { Calendar } from 'react-native-calendars';
 import api from '../../../services/api';
 import { HoffColors } from '@/constants/theme';
 import { taskSpacing, taskRadius, taskShadowCard } from '@/constants/taskUi';
-import { TaskScreenContainer, TaskSearchField } from '@/components/tareas';
+import { InfoModal, TaskScreenContainer, TaskSearchField, TimePicker } from '@/components/tareas';
 import { ClienteAvatar } from '@/components/clientes/ClienteAvatar';
 
 function matchesQuery(text: string, query: string): boolean {
@@ -30,175 +29,19 @@ interface TrabajadorSeleccionado {
   nombre: string;
 }
 
-// Componente de selector de tiempo deslizable
-interface TimePickerProps {
-  horas: number;
-  minutos: number;
-  onHorasChange: (horas: number) => void;
-  onMinutosChange: (minutos: number) => void;
-  maxHoras?: number;
-  maxMinutos?: number;
-  minHoras?: number;
-  size?: 'large' | 'small';
+function addDays(base: Date, days: number): Date {
+  const copy = new Date(base);
+  copy.setDate(copy.getDate() + days);
+  return copy;
 }
 
-const TimePicker: React.FC<TimePickerProps> = ({
-  horas,
-  minutos,
-  onHorasChange,
-  onMinutosChange,
-  maxHoras,
-  maxMinutos,
-  minHoras = 0,
-  size = 'large',
-}) => {
-  const horasScrollRef = React.useRef<ScrollView>(null);
-  const minutosScrollRef = React.useRef<ScrollView>(null);
+function dateToYmd(d: Date): string {
+  return d.toISOString().split('T')[0];
+}
 
-  const maxTotalMinutos = maxHoras !== undefined && maxMinutos !== undefined
-    ? maxHoras * 60 + maxMinutos
-    : undefined;
-
-  const isDisabled = (h: number, m: number): boolean => {
-    if (maxTotalMinutos === undefined) return false;
-    const totalMin = h * 60 + m;
-    return totalMin > maxTotalMinutos;
-  };
-
-  const horasRange = 25; // 0-24
-  const minutosRange = 60; // 0-59
-
-  const itemHeight = size === 'large' ? 50 : 40;
-  const wrapperHeight = size === 'large' ? 200 : 120;
-  const wrapperWidth = size === 'large' ? 100 : 60;
-
-  // Centrar scroll en el valor seleccionado
-  React.useEffect(() => {
-    const scrollToHoras = horas * itemHeight;
-    horasScrollRef.current?.scrollTo({
-      y: scrollToHoras,
-      animated: true,
-    });
-  }, [horas, itemHeight]);
-
-  React.useEffect(() => {
-    const scrollToMinutos = minutos * itemHeight;
-    minutosScrollRef.current?.scrollTo({
-      y: scrollToMinutos,
-      animated: true,
-    });
-  }, [minutos, itemHeight]);
-
-  const slotTop = wrapperHeight / 2 - itemHeight / 2;
-
-  return (
-    <View style={styles.timePickerContainer}>
-      <View style={styles.timePickerColumn}>
-        <Text style={styles.timePickerLabel}>Horas</Text>
-        <View
-          style={[styles.timePickerWrapper, { height: wrapperHeight, width: wrapperWidth }]}
-          onStartShouldSetResponder={() => true}
-          onMoveShouldSetResponder={() => true}
-        >
-          <View
-            pointerEvents="none"
-            style={[styles.timePickerSlotHighlight, { top: slotTop, height: itemHeight }]}
-          />
-          <ScrollView
-            ref={horasScrollRef}
-            style={styles.timePickerScroll}
-            showsVerticalScrollIndicator={false}
-            snapToInterval={itemHeight}
-            decelerationRate="fast"
-            contentContainerStyle={{ paddingVertical: wrapperHeight / 2 - itemHeight / 2 }}
-            nestedScrollEnabled={true}
-            scrollEventThrottle={16}
-          >
-            {Array.from({ length: horasRange }, (_, i) => i).map((h) => {
-              const disabled = isDisabled(h, minutos);
-              return (
-                <TouchableOpacity
-                  key={h}
-                  style={[
-                    styles.timePickerItem,
-                    { height: itemHeight },
-                    horas === h && styles.timePickerItemSelected,
-                    disabled && styles.timePickerItemDisabled
-                  ]}
-                  onPress={() => !disabled && onHorasChange(h)}
-                  disabled={disabled}
-                >
-                  <Text
-                    style={[
-                      styles.timePickerItemText,
-                      size === 'large' && styles.timePickerItemTextLarge,
-                      horas === h && styles.timePickerItemTextSelected,
-                      disabled && styles.timePickerItemTextDisabled
-                    ]}
-                  >
-                    {h}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-      </View>
-      
-      <View style={styles.timePickerColumn}>
-        <Text style={styles.timePickerLabel}>Minutos</Text>
-        <View
-          style={[styles.timePickerWrapper, { height: wrapperHeight, width: wrapperWidth }]}
-          onStartShouldSetResponder={() => true}
-          onMoveShouldSetResponder={() => true}
-        >
-          <View
-            pointerEvents="none"
-            style={[styles.timePickerSlotHighlight, { top: slotTop, height: itemHeight }]}
-          />
-          <ScrollView
-            ref={minutosScrollRef}
-            style={styles.timePickerScroll}
-            showsVerticalScrollIndicator={false}
-            snapToInterval={itemHeight}
-            decelerationRate="fast"
-            contentContainerStyle={{ paddingVertical: wrapperHeight / 2 - itemHeight / 2 }}
-            nestedScrollEnabled={true}
-            scrollEventThrottle={16}
-          >
-            {Array.from({ length: minutosRange }, (_, i) => i).map((m) => {
-              const disabled = isDisabled(horas, m);
-              return (
-                <TouchableOpacity
-                  key={m}
-                  style={[
-                    styles.timePickerItem,
-                    { height: itemHeight },
-                    minutos === m && styles.timePickerItemSelected,
-                    disabled && styles.timePickerItemDisabled
-                  ]}
-                  onPress={() => !disabled && onMinutosChange(m)}
-                  disabled={disabled}
-                >
-                  <Text
-                    style={[
-                      styles.timePickerItemText,
-                      size === 'large' && styles.timePickerItemTextLarge,
-                      minutos === m && styles.timePickerItemTextSelected,
-                      disabled && styles.timePickerItemTextDisabled
-                    ]}
-                  >
-                    {m.toString().padStart(2, '0')}
-                  </Text>
-                </TouchableOpacity>
-              );
-            })}
-          </ScrollView>
-        </View>
-      </View>
-    </View>
-  );
-};
+function isYmd(value: string): boolean {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value);
+}
 
 export default function CrearTareaScreen() {
   const router = useRouter();
@@ -215,6 +58,10 @@ export default function CrearTareaScreen() {
   const [horasEstimadas, setHorasEstimadas] = useState<number>(0);
   const [minutosEstimados, setMinutosEstimados] = useState<number>(0);
   const [valorServicio, setValorServicio] = useState<string>('');
+  const [modoContrato, setModoContrato] = useState(false);
+  const [descripcionContrato, setDescripcionContrato] = useState('');
+  const [valorContrato, setValorContrato] = useState('');
+  const [fechasManualSeleccionadas, setFechasManualSeleccionadas] = useState<string[]>([]);
 
   const [clienteSearch, setClienteSearch] = useState('');
   const [direccionSearch, setDireccionSearch] = useState('');
@@ -235,6 +82,33 @@ export default function CrearTareaScreen() {
   const [saving, setSaving] = useState(false);
   
   const [showTimePickerModal, setShowTimePickerModal] = useState(false);
+  const [infoModal, setInfoModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    variant: 'info' | 'success' | 'warning' | 'error';
+    onClose?: () => void;
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    variant: 'info',
+  });
+
+  const openInfoModal = (
+    title: string,
+    message: string,
+    variant: 'info' | 'success' | 'warning' | 'error' = 'info',
+    onClose?: () => void
+  ) => {
+    setInfoModal({ visible: true, title, message, variant, onClose });
+  };
+
+  const closeInfoModal = () => {
+    const cb = infoModal.onClose;
+    setInfoModal((prev) => ({ ...prev, visible: false, onClose: undefined }));
+    if (cb) cb();
+  };
 
   const clientesFiltrados = useMemo(() => {
     return clientes.filter((c) => {
@@ -254,6 +128,19 @@ export default function CrearTareaScreen() {
   const trabajadoresFiltrados = useMemo(() => {
     return trabajadores.filter((t) => matchesQuery(t.nombre ?? '', trabajadorSearch));
   }, [trabajadores, trabajadorSearch]);
+
+  const contractMarkedDates = useMemo(() => {
+    const marks: Record<string, any> = {};
+    for (const d of fechasManualSeleccionadas) {
+      marks[d] = {
+        ...(marks[d] || {}),
+        selected: true,
+        selectedColor: HoffColors.primary,
+        selectedTextColor: '#fff',
+      };
+    }
+    return marks;
+  }, [fechasManualSeleccionadas]);
 
   useEffect(() => {
     loadData();
@@ -292,7 +179,7 @@ export default function CrearTareaScreen() {
       if (clientesRes.success) setClientes(clientesRes.data ?? []);
       if (trabajadoresRes.success) setTrabajadores(trabajadoresRes.data ?? []);
     } catch (error: any) {
-      Alert.alert('Error', 'No se pudieron cargar los datos');
+      openInfoModal('Error', 'No se pudieron cargar los datos', 'error');
     } finally {
       setLoading(false);
     }
@@ -310,7 +197,7 @@ export default function CrearTareaScreen() {
         }
       }
     } catch (error: any) {
-      Alert.alert('Error', 'No se pudieron cargar las direcciones');
+      openInfoModal('Error', 'No se pudieron cargar las direcciones', 'error');
     } finally {
       setLoadingDirecciones(false);
     }
@@ -327,24 +214,85 @@ export default function CrearTareaScreen() {
 
   const handleSubmit = async () => {
     // Validaciones
-    if (!clienteId || !direccionId || !fechaRealizacion || !descripcionGeneral.trim() || !valorServicio) {
-      Alert.alert('Error', 'Por favor completa todos los campos requeridos');
+    if (!clienteId || !direccionId || !fechaRealizacion || !descripcionGeneral.trim()) {
+      openInfoModal('Error', 'Por favor completa todos los campos requeridos', 'error');
       return;
     }
 
-    if (isNaN(parseFloat(valorServicio)) || parseFloat(valorServicio) <= 0) {
-      Alert.alert('Error', 'El valor del servicio debe ser un número mayor a 0');
-      return;
+    if (!modoContrato) {
+      if (isNaN(parseFloat(valorServicio)) || parseFloat(valorServicio) <= 0) {
+        openInfoModal('Error', 'El valor del servicio debe ser un número mayor a 0', 'error');
+        return;
+      }
+    } else {
+      if (!descripcionContrato.trim()) {
+        openInfoModal('Error', 'Debes completar la descripción del contrato', 'error');
+        return;
+      }
+      if (isNaN(parseFloat(valorContrato)) || parseFloat(valorContrato) < 0) {
+        openInfoModal('Error', 'El valor del contrato debe ser un número mayor o igual a 0', 'error');
+        return;
+      }
     }
 
     setSaving(true);
 
     try {
-      // 1. Crear tarea base
+      const horasDecimal =
+        horasEstimadas > 0 || minutosEstimados > 0 ? horasEstimadas + (minutosEstimados / 60) : null;
+      // 1. Crear tarea normal o flujo contractual
+      if (modoContrato) {
+        const fechas: string[] = [...fechasManualSeleccionadas];
+        const fechasUnicas = [...new Set(fechas)];
+        if (fechasUnicas.length === 0) {
+          openInfoModal('Error', 'Debes indicar al menos una fecha válida para las tareas del contrato', 'error');
+          return;
+        }
+        const fechasOrdenadas = [...fechasUnicas].sort();
+        const fechaInicioContrato = fechasOrdenadas[0];
+        const fechaFinContrato = fechasOrdenadas[fechasOrdenadas.length - 1];
+
+        const contratoRes = await api.createContrato({
+          cliente_id: clienteId,
+          direccion_id: direccionId,
+          descripcion_contrato: descripcionContrato.trim(),
+          valor_contrato: parseFloat(valorContrato),
+          fecha_inicio: fechaInicioContrato,
+          fecha_fin: fechaFinContrato,
+          estado: 'activo',
+        });
+        if (!contratoRes.success || !contratoRes.data?.id) {
+          openInfoModal('Error', contratoRes.error || 'No se pudo crear el contrato', 'error');
+          return;
+        }
+
+        const tareasRes = await api.createContratoTareas(contratoRes.data.id, {
+          cliente_id: clienteId,
+          direccion_id: direccionId,
+          descripcion_general: descripcionGeneral,
+          detalles_especificos: detallesEspecificos.trim() || null,
+          numero_horas: horasDecimal,
+          fechas: fechasUnicas,
+        });
+
+        if (!tareasRes.success) {
+          openInfoModal('Error', tareasRes.error || 'No se pudieron crear las tareas del contrato', 'error');
+          return;
+        }
+
+        openInfoModal(
+          '¡Contrato y tareas creadas!',
+          `Se crearon ${tareasRes.data?.total ?? fechasUnicas.length} tareas vinculadas al contrato.`,
+          'success',
+          () => router.back()
+        );
+        return;
+      }
+
       const tareaData: any = {
         cliente_id: clienteId,
         direccion_id: direccionId,
-        fecha_realizacion: fechaRealizacion.toISOString().split('T')[0],
+        fecha_realizacion: dateToYmd(fechaRealizacion),
         descripcion_general: descripcionGeneral,
         valor_servicio: parseFloat(valorServicio),
       };
@@ -353,8 +301,7 @@ export default function CrearTareaScreen() {
         tareaData.detalles_especificos = detallesEspecificos;
       }
 
-      if (horasEstimadas > 0 || minutosEstimados > 0) {
-        const horasDecimal = horasEstimadas + (minutosEstimados / 60);
+      if (horasDecimal != null) {
         tareaData.numero_horas = horasDecimal;
       }
 
@@ -370,14 +317,15 @@ export default function CrearTareaScreen() {
           }
         }
 
-        Alert.alert(
+        openInfoModal(
           '¡Tarea creada!',
           'La tarea se ha creado exitosamente',
-          [{ text: 'OK', onPress: () => router.back() }]
+          'success',
+          () => router.back()
         );
       }
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'No se pudo crear la tarea');
+      openInfoModal('Error', error.message || 'No se pudo crear la tarea', 'error');
     } finally {
       setSaving(false);
     }
@@ -440,7 +388,37 @@ export default function CrearTareaScreen() {
         )}
       </View>
 
+      <View style={styles.card}>
+        <Text style={styles.label}>Modo de creación</Text>
+        <View style={styles.modoRow}>
+          <TouchableOpacity
+            style={[styles.modoChip, !modoContrato && styles.modoChipActive]}
+            onPress={() => setModoContrato(false)}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Usar creación de tarea normal"
+          >
+            <Text style={[styles.modoChipText, !modoContrato && styles.modoChipTextActive]}>Tarea normal</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.modoChip, modoContrato && styles.modoChipActive]}
+            onPress={() => setModoContrato(true)}
+            activeOpacity={0.85}
+            accessibilityRole="button"
+            accessibilityLabel="Usar creación bajo contrato"
+          >
+            <Text style={[styles.modoChipText, modoContrato && styles.modoChipTextActive]}>Bajo contrato</Text>
+          </TouchableOpacity>
+        </View>
+        <Text style={styles.modeHintText}>
+          {modoContrato
+            ? 'Crea un contrato y luego genera varias tareas vinculadas con valor 0.'
+            : 'Crea una tarea individual con su propio valor de servicio.'}
+        </Text>
+      </View>
+
       {/* Fecha de realización */}
+      {!modoContrato ? (
       <View style={styles.card}>
         <Text style={styles.label}>Fecha de realización *</Text>
         <TouchableOpacity
@@ -503,6 +481,40 @@ export default function CrearTareaScreen() {
           </View>
         </Modal>
       </View>
+      ) : (
+      <View style={styles.card}>
+        <Text style={styles.label}>Fechas para tareas del contrato *</Text>
+        <Calendar
+          current={dateToYmd(new Date())}
+          minDate={dateToYmd(new Date())}
+          onDayPress={(day) => {
+            const picked = day.dateString;
+            setFechasManualSeleccionadas((prev) => {
+              if (prev.includes(picked)) return prev.filter((d) => d !== picked);
+              return [...prev, picked].sort();
+            });
+          }}
+          markedDates={contractMarkedDates}
+          markingType="simple"
+          theme={{
+            todayTextColor: HoffColors.primary,
+            arrowColor: HoffColors.primary,
+            selectedDayBackgroundColor: HoffColors.primary,
+            selectedDayTextColor: '#fff',
+            textDayFontWeight: '500',
+            textMonthFontWeight: 'bold',
+            textDayHeaderFontWeight: '600',
+            textDayFontSize: 16,
+            textMonthFontSize: 18,
+            textDayHeaderFontSize: 14,
+          }}
+          enableSwipeMonths
+        />
+        <Text style={styles.helperText}>
+          Días seleccionados manualmente: {fechasManualSeleccionadas.length}
+        </Text>
+      </View>
+      )}
 
       {/* Descripción general */}
       <View style={styles.card}>
@@ -547,25 +559,51 @@ export default function CrearTareaScreen() {
           <Ionicons name="chevron-down" size={20} color={HoffColors.textSecondary} />
         </TouchableOpacity>
         <Text style={styles.helperText}>
-          Duración total del servicio. Cada trabajador que asignes recibirá esta misma duración en sus horas asignadas (puedes ajustarlas después en el detalle de la tarea).
+          Duración total del servicio. Cada miembro del staff que asignes recibirá esta misma duración en sus horas asignadas (puedes ajustarlas después en el detalle de la tarea).
         </Text>
       </View>
 
-      {/* Valor del servicio */}
-      <View style={styles.card}>
-        <Text style={styles.label}>Valor del servicio (€) *</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="0.00"
-          keyboardType="decimal-pad"
-          value={valorServicio}
-          onChangeText={setValorServicio}
-        />
-      </View>
+      {/* Valor del servicio o contrato */}
+      {!modoContrato ? (
+        <View style={styles.card}>
+          <Text style={styles.label}>Valor del servicio (€) *</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="0.00"
+            keyboardType="decimal-pad"
+            value={valorServicio}
+            onChangeText={setValorServicio}
+          />
+        </View>
+      ) : (
+        <View style={styles.card}>
+          <Text style={styles.label}>Descripción del contrato *</Text>
+          <TextInput
+            style={styles.textArea}
+            placeholder="Descripción del contrato con el cliente"
+            value={descripcionContrato}
+            onChangeText={setDescripcionContrato}
+            multiline
+            numberOfLines={3}
+            textAlignVertical="top"
+          />
+          <Text style={styles.label}>Valor del contrato (€) *</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="0.00"
+            keyboardType="decimal-pad"
+            value={valorContrato}
+            onChangeText={setValorContrato}
+          />
+          <Text style={styles.helperText}>
+            Las tareas creadas bajo contrato se guardan con valor 0 y quedan vinculadas al contrato.
+          </Text>
+        </View>
+      )}
 
       {/* Trabajadores */}
       <View style={styles.card}>
-        <Text style={styles.label}>Trabajadores (opcional)</Text>
+        <Text style={styles.label}>Staff (opcional)</Text>
         <TouchableOpacity
           style={styles.trabajadoresButton}
           onPress={() => setShowTrabajadoresModal(true)}
@@ -573,8 +611,8 @@ export default function CrearTareaScreen() {
           <Ionicons name="people-outline" size={22} color={HoffColors.primary} style={styles.trabajadoresButtonIcon} />
           <Text style={styles.trabajadoresButtonText}>
             {trabajadoresSeleccionados.length > 0
-              ? `${trabajadoresSeleccionados.length} trabajador(es) seleccionado(s)`
-              : 'Seleccionar trabajadores'}
+              ? `${trabajadoresSeleccionados.length} staff seleccionado(s)`
+              : 'Seleccionar staff'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -595,7 +633,7 @@ export default function CrearTareaScreen() {
           {saving ? (
             <ActivityIndicator color={HoffColors.white} />
           ) : (
-            <Text style={styles.submitButtonText}>Crear Tarea</Text>
+            <Text style={styles.submitButtonText}>{modoContrato ? 'Crear contrato y tareas' : 'Crear Tarea'}</Text>
           )}
         </TouchableOpacity>
       </View>
@@ -608,7 +646,7 @@ export default function CrearTareaScreen() {
       >
         <View style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Seleccionar trabajadores</Text>
+            <Text style={styles.modalTitle}>Seleccionar staff</Text>
             <TouchableOpacity
               style={styles.modalCloseButton}
               onPress={() => setShowTrabajadoresModal(false)}
@@ -656,7 +694,7 @@ export default function CrearTareaScreen() {
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyText}>
                   {trabajadores.length === 0
-                    ? 'No hay trabajadores disponibles'
+                    ? 'No hay staff disponible'
                     : 'Ningún resultado para tu búsqueda'}
                 </Text>
               </View>
@@ -839,6 +877,13 @@ export default function CrearTareaScreen() {
         </TouchableOpacity>
       </Modal>
     </ScrollView>
+    <InfoModal
+      visible={infoModal.visible}
+      title={infoModal.title}
+      message={infoModal.message}
+      variant={infoModal.variant}
+      onPrimary={closeInfoModal}
+    />
     </TaskScreenContainer>
   );
 }
@@ -880,6 +925,46 @@ const styles = StyleSheet.create({
     color: HoffColors.textSecondary,
     fontStyle: 'italic',
     marginTop: 4,
+  },
+  modoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: HoffColors.background,
+    borderRadius: taskRadius.md,
+    borderWidth: 1,
+    borderColor: HoffColors.border,
+    padding: 4,
+    gap: 6,
+  },
+  modoChip: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: taskRadius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+    paddingHorizontal: 10,
+  },
+  modoChipActive: {
+    backgroundColor: HoffColors.primary,
+    borderColor: HoffColors.primaryDark,
+  },
+  modoChipText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: HoffColors.textSecondary,
+    textAlign: 'center',
+  },
+  modoChipTextActive: {
+    color: HoffColors.white,
+  },
+  modeHintText: {
+    marginTop: 8,
+    fontSize: 12,
+    color: HoffColors.textMuted,
+    lineHeight: 18,
   },
   selectButton: {
     flexDirection: 'row',

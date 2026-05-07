@@ -18,21 +18,44 @@ const normalizeApiBase = (url: string): string => {
   return `${u}/api`;
 };
 
+/** URL que apunta a un backend en esta red / máquina (no producción remota). */
+function isProbablyLocalApiUrl(url: string): boolean {
+  try {
+    const raw = url.trim();
+    const withProto = /^https?:\/\//i.test(raw) ? raw : `http://${raw}`;
+    const u = new URL(withProto);
+    const host = u.hostname.toLowerCase();
+    if (host === 'localhost' || host === '127.0.0.1') return true;
+    if (host === '10.0.2.2') return true;
+    if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+    if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Base de la API (siempre termina en /api).
- * Prioridad:
- * 1) EXPO_PUBLIC_API_URL (obligatoria en builds de producción / Vercel para apuntar a tu backend)
- * 2) __DEV__: localhost / emulador / IP LAN por defecto
- * 3) Sin env en producción: expo.extra.apiUrl (EAS) si existe
- * 4) Último recurso: localhost (fallará en cliente salvo túnel; evita apuntar a un Railway ajeno)
+ *
+ * Producción / preview (__DEV__ === false):
+ * 1) EXPO_PUBLIC_API_URL (Vercel / EAS)
+ * 2) app.json extra.apiUrl
+ * 3) localhost (con aviso)
+ *
+ * Desarrollo (__DEV__):
+ * - Por defecto: backend local (localhost / 10.0.2.2 / LAN vía EXPO_PUBLIC_DEV_API_URL).
+ * - EXPO_PUBLIC_API_URL remota (https) se ignora salvo EXPO_PUBLIC_USE_REMOTE_API=1 (evita CORS al tener .env de prod).
+ * - EXPO_PUBLIC_API_URL local (localhost, IP LAN) sí se respeta.
  */
 const getBaseUrl = () => {
   const fromEnv = process.env.EXPO_PUBLIC_API_URL?.trim();
-  if (fromEnv) {
-    return normalizeApiBase(fromEnv);
-  }
+  const useRemoteInDev =
+    __DEV__ &&
+    (process.env.EXPO_PUBLIC_USE_REMOTE_API === '1' ||
+      process.env.EXPO_PUBLIC_USE_REMOTE_API === 'true');
 
-  if (__DEV__) {
+  const devLocalDefault = (): string => {
     if (Platform.OS === 'web') {
       return 'http://localhost:3000/api';
     }
@@ -42,7 +65,35 @@ const getBaseUrl = () => {
     if (Platform.OS === 'ios' && !Constants.isDevice) {
       return 'http://localhost:3000/api';
     }
+    const lan = process.env.EXPO_PUBLIC_DEV_API_URL?.trim();
+    if (lan) {
+      return normalizeApiBase(lan);
+    }
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+      console.warn(
+        '[Hoff API] Dispositivo físico: define EXPO_PUBLIC_DEV_API_URL=http://IP_DE_TU_PC:3000/api en .env.development'
+      );
+    }
     return 'http://192.168.1.110:3000/api';
+  };
+
+  if (__DEV__) {
+    if (useRemoteInDev && fromEnv) {
+      return normalizeApiBase(fromEnv);
+    }
+    if (fromEnv && isProbablyLocalApiUrl(fromEnv)) {
+      return normalizeApiBase(fromEnv);
+    }
+    if (fromEnv && !useRemoteInDev) {
+      console.warn(
+        '[Hoff API] __DEV__: ignorando EXPO_PUBLIC_API_URL no local. Usando API por defecto en desarrollo. Para forzar remota: EXPO_PUBLIC_USE_REMOTE_API=1'
+      );
+    }
+    return devLocalDefault();
+  }
+
+  if (fromEnv) {
+    return normalizeApiBase(fromEnv);
   }
 
   const extraUrl =
@@ -55,11 +106,9 @@ const getBaseUrl = () => {
     return normalizeApiBase(extraUrl);
   }
 
-  if (!__DEV__) {
-    console.warn(
-      '[Hoff API] Define EXPO_PUBLIC_API_URL en el build (Vercel/EAS) con la URL pública de tu backend, ej. https://tu-servicio.up.railway.app'
-    );
-  }
+  console.warn(
+    '[Hoff API] Define EXPO_PUBLIC_API_URL en el build (Vercel/EAS) con la URL pública de tu backend, ej. https://tu-servicio.up.railway.app'
+  );
   return 'http://localhost:3000/api';
 };
 
@@ -115,6 +164,8 @@ export interface User {
   descripcion: string | null;
   foto_perfil: string | null;
   tipo: 'admin' | 'trabajador';
+  /** Solo cuando tipo es trabajador */
+  contacto_emergencia?: string | null;
 }
 
 export interface LoginResponse {
@@ -134,10 +185,41 @@ export interface Trabajador {
   id: number;
   usuario: string;
   nombre: string;
+  cargo?: string | null;
+  fecha_ingreso?: string | null;
+  contacto_emergencia?: string | null;
   descripcion: string | null;
   foto_perfil: string | null;
   fecha_creacion?: string;
   activo: boolean;
+}
+
+export interface TrabajadorPayload {
+  usuario?: string;
+  password?: string;
+  nombre?: string;
+  cargo?: string | null;
+  fecha_ingreso?: string | null;
+  contacto_emergencia?: string | null;
+  descripcion?: string | null;
+  foto_perfil?: string | null;
+  activo?: boolean;
+  tarifa_hora_predeterminada?: number | string | null;
+}
+
+export interface Contrato {
+  id: number;
+  cliente_id: number;
+  direccion_id?: number | null;
+  descripcion_contrato: string;
+  valor_contrato: number | string;
+  estado: 'borrador' | 'activo' | 'cerrado' | 'pagado' | 'anulado';
+  fecha_inicio?: string | null;
+  fecha_fin?: string | null;
+  fecha_pago?: string | null;
+  referencia_pago?: string | null;
+  notas_pago?: string | null;
+  subido_registro_permanente?: boolean;
 }
 
 export interface Cliente {
@@ -242,6 +324,7 @@ const api = {
     nombre?: string;
     descripcion?: string | null;
     foto_perfil?: string | null;
+    contacto_emergencia?: string | null;
   }): Promise<ApiResponse<User>> => {
     return apiRequest<User>('/auth/me', {
       method: 'PUT',
@@ -291,11 +374,15 @@ const api = {
   asignarTrabajador: async (
     tareaId: number,
     trabajadorId: number,
-    horasAsignadas?: number
+    horasAsignadas?: number,
+    horaInicio?: string | null
   ): Promise<ApiResponse<any>> => {
     const body: Record<string, unknown> = { trabajador_id: trabajadorId };
     if (horasAsignadas !== undefined && horasAsignadas !== null && Number.isFinite(horasAsignadas)) {
       body.horas_asignadas = horasAsignadas;
+    }
+    if (horaInicio !== undefined) {
+      body.hora_inicio = horaInicio;
     }
     return apiRequest(`/tareas/${tareaId}/asignar`, {
       method: 'POST',
@@ -306,13 +393,18 @@ const api = {
   actualizarHorasTrabajador: async (
     tareaId: number,
     trabajadorId: number,
-    horasAsignadas: number
+    horasAsignadas: number,
+    opts?: { horaInicio?: string | null }
   ): Promise<ApiResponse<any>> => {
+    const body: Record<string, unknown> = {
+      horas_asignadas: horasAsignadas,
+    };
+    if (opts && 'horaInicio' in opts) {
+      body.hora_inicio = opts.horaInicio;
+    }
     return apiRequest(`/tareas/${tareaId}/trabajador/${trabajadorId}/horas`, {
       method: 'PUT',
-      body: JSON.stringify({
-        horas_asignadas: horasAsignadas,
-      }),
+      body: JSON.stringify(body),
     });
   },
 
@@ -341,17 +433,27 @@ const api = {
     return apiRequest(`/trabajadores/${id}`);
   },
 
-  createTrabajador: async (trabajadorData: any): Promise<ApiResponse<any>> => {
+  createTrabajador: async (trabajadorData: TrabajadorPayload): Promise<ApiResponse<any>> => {
     return apiRequest('/trabajadores', {
       method: 'POST',
       body: JSON.stringify(trabajadorData),
     });
   },
 
-  updateTrabajador: async (id: number, trabajadorData: any): Promise<ApiResponse<any>> => {
+  updateTrabajador: async (id: number, trabajadorData: TrabajadorPayload): Promise<ApiResponse<any>> => {
     return apiRequest(`/trabajadores/${id}`, {
       method: 'PUT',
       body: JSON.stringify(trabajadorData),
+    });
+  },
+
+  resetTrabajadorPassword: async (
+    id: number,
+    payload: { admin_password: string; new_password: string }
+  ): Promise<ApiResponse<any>> => {
+    return apiRequest(`/trabajadores/${id}/reset-password`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
     });
   },
 
@@ -402,6 +504,91 @@ const api = {
     return apiRequest(`/clientes/${id}`, {
       method: 'PUT',
       body: JSON.stringify(clienteData),
+    });
+  },
+
+  getContratosByCliente: async (clienteId: number): Promise<ApiResponse<Contrato[]>> => {
+    return apiRequest<Contrato[]>(`/clientes/${clienteId}/contratos`);
+  },
+
+  getContratoById: async (id: number): Promise<ApiResponse<any>> => {
+    return apiRequest(`/contratos/${id}`);
+  },
+
+  createContrato: async (payload: {
+    cliente_id: number;
+    direccion_id?: number | null;
+    descripcion_contrato: string;
+    valor_contrato: number;
+    fecha_inicio?: string | null;
+    fecha_fin?: string | null;
+    estado?: 'borrador' | 'activo';
+  }): Promise<ApiResponse<any>> => {
+    return apiRequest('/contratos', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  createContratoTareas: async (
+    contratoId: number,
+    payload: {
+      cliente_id: number;
+      direccion_id: number;
+      descripcion_general: string;
+      detalles_especificos?: string | null;
+      numero_horas?: number | null;
+      fechas: string[];
+    }
+  ): Promise<ApiResponse<any>> => {
+    return apiRequest(`/contratos/${contratoId}/tareas`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  removeContratoTarea: async (contratoId: number, tareaId: number): Promise<ApiResponse<any>> => {
+    return apiRequest(`/contratos/${contratoId}/tareas/${tareaId}`, {
+      method: 'DELETE',
+    });
+  },
+
+  updateContrato: async (
+    id: number,
+    payload: Partial<{
+      descripcion_contrato: string;
+      valor_contrato: number;
+      fecha_inicio: string | null;
+      fecha_fin: string | null;
+      estado: 'borrador' | 'activo' | 'cerrado' | 'pagado' | 'anulado';
+    }>
+  ): Promise<ApiResponse<any>> => {
+    return apiRequest(`/contratos/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  },
+
+  pagarContrato: async (
+    id: number,
+    payload?: {
+      monto?: number;
+      fecha_pago?: string;
+      referencia_pago?: string | null;
+      notas?: string | null;
+      comprobante_url?: string | null;
+    }
+  ): Promise<ApiResponse<any>> => {
+    return apiRequest(`/contratos/${id}/pagar`, {
+      method: 'POST',
+      body: JSON.stringify(payload || {}),
+    });
+  },
+
+  cerrarContrato: async (id: number): Promise<ApiResponse<any>> => {
+    return apiRequest(`/contratos/${id}/cerrar`, {
+      method: 'POST',
+      body: JSON.stringify({}),
     });
   },
 

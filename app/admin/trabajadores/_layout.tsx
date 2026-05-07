@@ -19,13 +19,19 @@ export default function TrabajadoresLayout() {
       <Stack.Screen
         name="index"
         options={{
-          title: 'Trabajadores',
+          title: 'Staff',
         }}
       />
       <Stack.Screen
         name="detalle"
         options={{
-          title: 'Detalle del Trabajador',
+          title: 'Detalle de staff',
+        }}
+      />
+      <Stack.Screen
+        name="editar"
+        options={{
+          title: 'Editar perfil',
         }}
       />
       <Stack.Screen
@@ -37,7 +43,7 @@ export default function TrabajadoresLayout() {
       <Stack.Screen
         name="crear"
         options={{
-          title: 'Nuevo trabajador',
+          title: 'Nuevo staff',
         }}
       />
     </Stack>

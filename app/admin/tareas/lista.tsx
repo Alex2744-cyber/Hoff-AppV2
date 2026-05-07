@@ -6,7 +6,6 @@ import {
   ScrollView,
   ActivityIndicator,
   RefreshControl,
-  Alert,
   useWindowDimensions,
   TouchableOpacity,
 } from 'react-native';
@@ -29,6 +28,7 @@ import {
   TaskSearchField,
   TaskFilterChipRow,
   TaskFiltersPanel,
+  InfoModal,
   type TaskFilterChipItem,
 } from '@/components/tareas';
 
@@ -47,7 +47,34 @@ export default function ListaTareasScreen() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [draftSearchQuery, setDraftSearchQuery] = useState('');
   const [draftActiveFilter, setDraftActiveFilter] = useState<FilterTab>('todas');
+  const [infoModal, setInfoModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    variant: 'info' | 'success' | 'warning' | 'error';
+    onClose?: () => void;
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    variant: 'info',
+  });
   const listInFlightRef = useRef(false);
+
+  const openInfoModal = (
+    title: string,
+    message: string,
+    variant: 'info' | 'success' | 'warning' | 'error' = 'info',
+    onClose?: () => void
+  ) => {
+    setInfoModal({ visible: true, title, message, variant, onClose });
+  };
+
+  const closeInfoModal = () => {
+    const cb = infoModal.onClose;
+    setInfoModal((prev) => ({ ...prev, visible: false, onClose: undefined }));
+    if (cb) cb();
+  };
 
   const loadTareas = useCallback(async () => {
     if (listInFlightRef.current) return;
@@ -58,7 +85,7 @@ export default function ListaTareasScreen() {
         setTareas(response.data);
       }
     } catch {
-      Alert.alert('Error', 'No se pudieron cargar las tareas');
+      openInfoModal('Error', 'No se pudieron cargar las tareas', 'error');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -311,6 +338,13 @@ export default function ListaTareasScreen() {
           </View>
         )}
       </ScrollView>
+      <InfoModal
+        visible={infoModal.visible}
+        title={infoModal.title}
+        message={infoModal.message}
+        variant={infoModal.variant}
+        onPrimary={closeInfoModal}
+      />
     </View>
   );
 }

@@ -6,7 +6,6 @@ import {
   ScrollView,
   TextInput,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
   Modal,
 } from 'react-native';
@@ -16,7 +15,7 @@ import { Calendar } from 'react-native-calendars';
 import api from '../../../services/api';
 import { HoffColors } from '@/constants/theme';
 import { taskSpacing, taskRadius, taskShadowCard } from '@/constants/taskUi';
-import { TaskScreenContainer, TaskSection } from '@/components/tareas';
+import { TaskScreenContainer, TaskSection, InfoModal } from '@/components/tareas';
 import { decimalATiempo, tiempoADecimal, validarFormatoTiempo } from '@/utils/tareas';
 
 export default function EditarTareaScreen() {
@@ -26,6 +25,33 @@ export default function EditarTareaScreen() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showDatePicker, setShowDatePicker] = useState(false);
+  const [infoModal, setInfoModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    variant: 'info' | 'success' | 'warning' | 'error';
+    onClose?: () => void;
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    variant: 'info',
+  });
+
+  const openInfoModal = (
+    title: string,
+    message: string,
+    variant: 'info' | 'success' | 'warning' | 'error' = 'info',
+    onClose?: () => void
+  ) => {
+    setInfoModal({ visible: true, title, message, variant, onClose });
+  };
+
+  const closeInfoModal = () => {
+    const cb = infoModal.onClose;
+    setInfoModal((prev) => ({ ...prev, visible: false, onClose: undefined }));
+    if (cb) cb();
+  };
 
   const [clienteNombre, setClienteNombre] = useState('');
   const [direccionTexto, setDireccionTexto] = useState('');
@@ -43,9 +69,7 @@ export default function EditarTareaScreen() {
   const loadTarea = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = Boolean(opts?.silent);
     if (!id) {
-      Alert.alert('Error', 'Falta el identificador de la tarea', [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
+      openInfoModal('Error', 'Falta el identificador de la tarea', 'error', () => router.back());
       return;
     }
 
@@ -53,18 +77,17 @@ export default function EditarTareaScreen() {
       if (!silent) setLoading(true);
       const response = await api.getTareaById(Number(id));
       if (!response.success || !response.data) {
-        Alert.alert('Error', 'No se pudo cargar la tarea', [
-          { text: 'OK', onPress: () => router.back() },
-        ]);
+        openInfoModal('Error', 'No se pudo cargar la tarea', 'error', () => router.back());
         return;
       }
 
       const t = response.data as any;
       if (t.estado !== 'pendiente' && t.estado !== 'asignada') {
-        Alert.alert(
+        openInfoModal(
           'No editable',
           'Solo se pueden editar tareas en estado pendiente o asignada.',
-          [{ text: 'OK', onPress: () => router.back() }]
+          'warning',
+          () => router.back()
         );
         return;
       }
@@ -84,9 +107,7 @@ export default function EditarTareaScreen() {
       const vs = t.valor_servicio != null ? parseFloat(String(t.valor_servicio)) : 0;
       setValorServicio(isNaN(vs) ? '' : String(vs));
     } catch {
-      Alert.alert('Error', 'No se pudo cargar la tarea', [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
+      openInfoModal('Error', 'No se pudo cargar la tarea', 'error', () => router.back());
     } finally {
       if (!silent) setLoading(false);
     }
@@ -104,17 +125,21 @@ export default function EditarTareaScreen() {
     if (!id) return;
 
     if (!descripcionGeneral.trim() || !valorServicio.trim()) {
-      Alert.alert('Error', 'Completa la descripción y el valor del servicio');
+      openInfoModal('Error', 'Completa la descripción y el valor del servicio', 'error');
       return;
     }
 
     if (isNaN(parseFloat(valorServicio)) || parseFloat(valorServicio) <= 0) {
-      Alert.alert('Error', 'El valor del servicio debe ser un número mayor a 0');
+      openInfoModal('Error', 'El valor del servicio debe ser un número mayor a 0', 'error');
       return;
     }
 
     if (horasEstimadasStr.trim() && !validarFormatoTiempo(horasEstimadasStr.trim())) {
-      Alert.alert('Error', 'Las horas estimadas deben tener formato H:MM o HH:MM (ej. 2:30)');
+      openInfoModal(
+        'Error',
+        'Las horas estimadas deben tener formato H:MM o HH:MM (ej. 2:30)',
+        'error'
+      );
       return;
     }
 
@@ -137,12 +162,10 @@ export default function EditarTareaScreen() {
     try {
       const response = await api.updateTarea(Number(id), payload);
       if (response.success) {
-        Alert.alert('Guardado', 'La tarea se ha actualizado correctamente', [
-          { text: 'OK', onPress: () => router.back() },
-        ]);
+        openInfoModal('Guardado', 'La tarea se ha actualizado correctamente', 'success', () => router.back());
       }
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'No se pudo guardar los cambios');
+      openInfoModal('Error', error.message || 'No se pudo guardar los cambios', 'error');
     } finally {
       setSaving(false);
     }
@@ -283,6 +306,13 @@ export default function EditarTareaScreen() {
         </TouchableOpacity>
       </View>
     </ScrollView>
+    <InfoModal
+      visible={infoModal.visible}
+      title={infoModal.title}
+      message={infoModal.message}
+      variant={infoModal.variant}
+      onPrimary={closeInfoModal}
+    />
     </TaskScreenContainer>
   );
 }

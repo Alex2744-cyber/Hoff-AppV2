@@ -6,7 +6,6 @@ import {
   ScrollView,
   ActivityIndicator,
   RefreshControl,
-  Alert,
   useWindowDimensions,
   TouchableOpacity,
 } from 'react-native';
@@ -30,6 +29,7 @@ import {
   TaskSearchField,
   TaskFilterChipRow,
   TaskFiltersPanel,
+  InfoModal,
   type TaskFilterChipItem,
 } from '@/components/tareas';
 
@@ -51,7 +51,34 @@ export default function TareasCompletadasScreen() {
   const [draftSearchQuery, setDraftSearchQuery] = useState('');
   const [draftDateFilter, setDraftDateFilter] = useState<FilterDate>('todas');
   const [draftSelectedTrabajador, setDraftSelectedTrabajador] = useState<number | null>(null);
+  const [infoModal, setInfoModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    variant: 'info' | 'success' | 'warning' | 'error';
+    onClose?: () => void;
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    variant: 'info',
+  });
   const listInFlightRef = useRef(false);
+
+  const openInfoModal = (
+    title: string,
+    message: string,
+    variant: 'info' | 'success' | 'warning' | 'error' = 'info',
+    onClose?: () => void
+  ) => {
+    setInfoModal({ visible: true, title, message, variant, onClose });
+  };
+
+  const closeInfoModal = () => {
+    const cb = infoModal.onClose;
+    setInfoModal((prev) => ({ ...prev, visible: false, onClose: undefined }));
+    if (cb) cb();
+  };
 
   const loadTareas = useCallback(async () => {
     if (listInFlightRef.current) return;
@@ -64,7 +91,7 @@ export default function TareasCompletadasScreen() {
         setTareas(completadas);
       }
     } catch {
-      Alert.alert('Error', 'No se pudieron cargar las tareas completadas');
+      openInfoModal('Error', 'No se pudieron cargar las tareas completadas', 'error');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -324,7 +351,7 @@ export default function TareasCompletadasScreen() {
           value={draftSearchQuery}
           onChangeText={setDraftSearchQuery}
         />
-        <Text style={taskFilterSectionLabel}>Filtrar por trabajador</Text>
+        <Text style={taskFilterSectionLabel}>Filtrar por staff</Text>
         <TaskFilterChipRow
           chips={workerChips.map((chip) => ({
             ...chip,
@@ -403,6 +430,13 @@ export default function TareasCompletadasScreen() {
           </View>
         )}
       </ScrollView>
+      <InfoModal
+        visible={infoModal.visible}
+        title={infoModal.title}
+        message={infoModal.message}
+        variant={infoModal.variant}
+        onPrimary={closeInfoModal}
+      />
     </View>
   );
 }

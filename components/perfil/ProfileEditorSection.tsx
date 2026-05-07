@@ -24,13 +24,16 @@ export function ProfileEditorSection({ mediaTipo }: Props) {
   const router = useRouter();
   const [nombre, setNombre] = useState('');
   const [descripcion, setDescripcion] = useState('');
+  const [contactoEmergencia, setContactoEmergencia] = useState('');
   const [fotoUrl, setFotoUrl] = useState('');
   const [saving, setSaving] = useState(false);
+  const esTrabajador = mediaTipo === 'trabajador_perfil';
 
   useEffect(() => {
     if (user) {
       setNombre(user.nombre || '');
       setDescripcion(user.descripcion ?? '');
+      setContactoEmergencia(user.contacto_emergencia ?? '');
       setFotoUrl(user.foto_perfil || '');
     }
   }, [user]);
@@ -42,11 +45,20 @@ export function ProfileEditorSection({ mediaTipo }: Props) {
     }
     setSaving(true);
     try {
-      const res = await api.updateAuthMe({
+      const payload: {
+        nombre: string;
+        descripcion: string | null;
+        foto_perfil: string | null;
+        contacto_emergencia?: string | null;
+      } = {
         nombre: nombre.trim(),
         descripcion: descripcion.trim() || null,
         foto_perfil: fotoUrl.trim() || null,
-      });
+      };
+      if (esTrabajador) {
+        payload.contacto_emergencia = contactoEmergencia.trim() || null;
+      }
+      const res = await api.updateAuthMe(payload);
       if (res.success && res.data) {
         await applySessionUser(res.data as User);
         router.back();
@@ -76,10 +88,10 @@ export function ProfileEditorSection({ mediaTipo }: Props) {
         onChangeText={setNombre}
       />
 
-      <Text style={styles.label}>Descripción (opcional)</Text>
+      <Text style={styles.label}>Información relevante</Text>
       <TextInput
         style={styles.textArea}
-        placeholder="Breve descripción o notas sobre ti"
+        placeholder="Notas o información relevante sobre ti"
         placeholderTextColor={HoffColors.textMuted}
         value={descripcion}
         onChangeText={setDescripcion}
@@ -87,6 +99,26 @@ export function ProfileEditorSection({ mediaTipo }: Props) {
         numberOfLines={4}
         textAlignVertical="top"
       />
+
+      {esTrabajador ? (
+        <>
+          <Text style={styles.label}>Contacto de emergencia</Text>
+          <Text style={styles.hintMuted}>
+            Persona o teléfono a avisar si fuera necesario (opcional, máx. 255 caracteres).
+          </Text>
+          <TextInput
+            style={styles.textArea}
+            placeholder="Ej: María Pérez — 612 345 678"
+            placeholderTextColor={HoffColors.textMuted}
+            value={contactoEmergencia}
+            onChangeText={setContactoEmergencia}
+            multiline
+            numberOfLines={3}
+            textAlignVertical="top"
+            maxLength={255}
+          />
+        </>
+      ) : null}
 
       <Text style={styles.hintMuted}>
         El nombre de usuario (@{user.usuario}) no se puede cambiar desde la app.

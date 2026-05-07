@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -7,16 +7,23 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   TextInput,
-  Alert,
   Modal,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import api from '@/services/api';
 import { HoffColors } from '@/constants/theme';
 import { taskSpacing, taskRadius, taskShadowCard } from '@/constants/taskUi';
 import { TaskScreenContainer } from '@/components/tareas/TaskScreenContainer';
-import { ProfilePhotoFormSection } from '@/components/admin/ProfilePhotoFormSection';
+import { InfoModal } from '@/components/tareas';
+import { ClienteAvatar } from '@/components/clientes/ClienteAvatar';
+
+function formatFechaIngreso(fecha: string | null | undefined): string {
+  if (!fecha || typeof fecha !== 'string') return 'Sin fecha';
+  const d = fecha.slice(0, 10);
+  return d || 'Sin fecha';
+}
 
 export default function DetalleTrabajadorScreen() {
   const router = useRouter();
@@ -24,68 +31,109 @@ export default function DetalleTrabajadorScreen() {
 
   const [trabajador, setTrabajador] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [activo, setActivo] = useState(true);
-  const [nombre, setNombre] = useState('');
-  const [descripcion, setDescripcion] = useState('');
-  const [fotoPerfil, setFotoPerfil] = useState('');
   const [showCredencialesModal, setShowCredencialesModal] = useState(false);
+  const [adminPassword, setAdminPassword] = useState('');
+  const [newWorkerPassword, setNewWorkerPassword] = useState('');
+  const [resettingPassword, setResettingPassword] = useState(false);
+  const [infoModal, setInfoModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    variant: 'info' | 'success' | 'warning' | 'error';
+    onClose?: () => void;
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    variant: 'info',
+  });
 
-  useEffect(() => {
-    if (id) {
-      loadTrabajador();
-    }
-  }, [id]);
+  const openInfoModal = (
+    title: string,
+    message: string,
+    variant: 'info' | 'success' | 'warning' | 'error' = 'info',
+    onClose?: () => void
+  ) => setInfoModal({ visible: true, title, message, variant, onClose });
 
-  const loadTrabajador = async () => {
+  const closeInfoModal = () => {
+    const cb = infoModal.onClose;
+    setInfoModal((prev) => ({ ...prev, visible: false, onClose: undefined }));
+    if (cb) cb();
+  };
+
+  const closeCredencialesModal = () => {
+    if (resettingPassword) return;
+    setShowCredencialesModal(false);
+    setAdminPassword('');
+    setNewWorkerPassword('');
+  };
+
+  const loadTrabajador = useCallback(async () => {
+    if (!id) return;
     try {
       setLoading(true);
       const response = await api.getTrabajadorById(Number(id));
       if (response.success && response.data) {
-        const data = response.data;
-        setTrabajador(data);
-        setNombre(data.nombre || '');
-        setDescripcion(data.descripcion || '');
-        setFotoPerfil(data.foto_perfil || '');
-        setActivo(data.activo !== undefined ? data.activo : true);
+        setTrabajador(response.data);
+      } else {
+        setTrabajador(null);
       }
     } catch {
-      Alert.alert('Error', 'No se pudo cargar el trabajador');
-      router.back();
+      openInfoModal('Error', 'No se pudo cargar el staff', 'error', () => router.back());
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, router]);
 
-  const handleSubmit = async () => {
-    if (!nombre.trim()) {
-      Alert.alert('Error', 'El nombre es requerido');
+  useFocusEffect(
+    useCallback(() => {
+      loadTrabajador();
+    }, [loadTrabajador])
+  );
+
+  const handleResetPassword = async () => {
+    if (!adminPassword.trim()) {
+      openInfoModal('Error', 'Debes ingresar tu contraseña de administrador', 'error');
+      return;
+    }
+    if (!newWorkerPassword.trim()) {
+      openInfoModal('Error', 'Debes ingresar la nueva contraseña del staff', 'error');
+      return;
+    }
+    if (newWorkerPassword.trim().length < 6) {
+      openInfoModal('Error', 'La nueva contraseña debe tener al menos 6 caracteres', 'error');
       return;
     }
 
-    setSaving(true);
-
     try {
-      const trabajadorData: any = {
-        nombre: nombre.trim(),
-        descripcion: descripcion.trim() || null,
-        activo: activo,
-        foto_perfil: fotoPerfil.trim() || null,
-      };
-
-      const response = await api.updateTrabajador(Number(id), trabajadorData);
-
+      setResettingPassword(true);
+      const response = await api.resetTrabajadorPassword(Number(id), {
+        admin_password: adminPassword,
+        new_password: newWorkerPassword,
+      });
       if (response.success) {
-        Alert.alert(
-          'Trabajador actualizado',
-          'Los cambios se han guardado correctamente',
-          [{ text: 'OK', onPress: () => router.back() }]
+        const plain = newWorkerPassword;
+        closeCredencialesModal();
+        openInfoModal(
+          'Contraseña restablecida',
+          `La nueva contraseña temporal es: ${plain}\n\nCompártela con el staff por un canal seguro y pídele cambiarla al iniciar sesión.`,
+          'success'
+        );
+      } else {
+        openInfoModal(
+          'Error',
+          (response as { error?: string }).error || 'No se pudo restablecer la contraseña',
+          'error'
         );
       }
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'No se pudo actualizar el trabajador');
+      openInfoModal(
+        'Error',
+        error?.message || 'No se pudo restablecer la contraseña del staff',
+        'error'
+      );
     } finally {
-      setSaving(false);
+      setResettingPassword(false);
     }
   };
 
@@ -94,7 +142,7 @@ export default function DetalleTrabajadorScreen() {
       <TaskScreenContainer>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={HoffColors.primary} />
-          <Text style={styles.loadingText}>Cargando trabajador...</Text>
+          <Text style={styles.loadingText}>Cargando staff...</Text>
         </View>
       </TaskScreenContainer>
     );
@@ -104,70 +152,92 @@ export default function DetalleTrabajadorScreen() {
     return (
       <TaskScreenContainer>
         <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>Trabajador no encontrado</Text>
+          <Text style={styles.loadingText}>Staff no encontrado</Text>
         </View>
       </TaskScreenContainer>
     );
   }
 
+  const activo = trabajador.activo !== false;
+
   return (
     <TaskScreenContainer>
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-        keyboardShouldPersistTaps="handled"
-      >
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
         <View style={styles.card}>
           <View style={styles.sectionTitleRow}>
             <Ionicons name="person-outline" size={20} color={HoffColors.primary} />
             <Text style={styles.sectionTitle}>Información del perfil</Text>
           </View>
 
-          <ProfilePhotoFormSection
-            variant="embedded"
-            displayName={nombre.trim() || trabajador.nombre || '?'}
-            fotoUrl={fotoPerfil}
-            onFotoUrlChange={setFotoPerfil}
-            mediaTipo="trabajador_perfil"
-          />
-
-          <Text style={styles.label}>Nombre *</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Nombre completo"
-            placeholderTextColor={HoffColors.textMuted}
-            value={nombre}
-            onChangeText={setNombre}
-          />
-
-          <Text style={styles.label}>Usuario</Text>
-          <View style={styles.usuarioContainer}>
-            <Text style={styles.usuarioText}>@{trabajador.usuario}</Text>
-            <Text style={styles.usuarioHelper}>El usuario no puede ser modificado</Text>
+          <View style={styles.avatarBlock}>
+            <ClienteAvatar
+              nombre={trabajador.nombre || '?'}
+              fotoUri={trabajador.foto_perfil || undefined}
+              size={88}
+            />
+            <View style={styles.avatarMeta}>
+              <Text style={styles.displayName}>{trabajador.nombre}</Text>
+              <View style={[styles.estadoBadge, activo ? styles.estadoBadgeActivo : styles.estadoBadgeInactivo]}>
+                <Text style={[styles.estadoBadgeText, !activo && styles.estadoBadgeTextInactivo]}>
+                  {activo ? 'Activo' : 'Desactivado'}
+                </Text>
+              </View>
+            </View>
           </View>
 
-          <Text style={styles.label}>Descripción</Text>
-          <TextInput
-            style={styles.textArea}
-            placeholder="Descripción del trabajador (opcional)"
-            placeholderTextColor={HoffColors.textMuted}
-            multiline
-            numberOfLines={4}
-            value={descripcion}
-            onChangeText={setDescripcion}
-            textAlignVertical="top"
-          />
+          <View style={styles.infoRow}>
+            <Text style={styles.label}>Usuario</Text>
+            <Text style={styles.value}>@{trabajador.usuario}</Text>
+          </View>
 
-          <Text style={styles.label}>Fecha de registro</Text>
-          <Text style={styles.infoText}>
-            {new Date(trabajador.fecha_creacion || Date.now()).toLocaleDateString('es-ES', {
-              year: 'numeric',
-              month: 'long',
-              day: 'numeric',
-              hour: '2-digit',
-              minute: '2-digit',
-            })}
-          </Text>
+          <View style={styles.infoRow}>
+            <Text style={styles.label}>Cargo o posición</Text>
+            <Text style={styles.value}>{trabajador.cargo?.trim() ? trabajador.cargo : '—'}</Text>
+          </View>
+
+          <View style={styles.infoRow}>
+            <Text style={styles.label}>Fecha de ingreso</Text>
+            <Text style={styles.value}>{formatFechaIngreso(trabajador.fecha_ingreso)}</Text>
+          </View>
+
+          <View style={styles.infoRow}>
+            <Text style={styles.label}>Contacto de emergencia</Text>
+            <Text style={styles.valueMultiline}>
+              {trabajador.contacto_emergencia?.trim()
+                ? trabajador.contacto_emergencia
+                : 'Sin datos'}
+            </Text>
+          </View>
+
+          <View style={styles.infoRow}>
+            <Text style={styles.label}>Información relevante</Text>
+            <Text style={styles.valueMultiline}>
+              {trabajador.descripcion?.trim() ? trabajador.descripcion : 'Sin información relevante'}
+            </Text>
+          </View>
+
+          <View style={styles.infoRow}>
+            <Text style={styles.label}>Fecha de registro</Text>
+            <Text style={styles.value}>
+              {new Date(trabajador.fecha_creacion || Date.now()).toLocaleDateString('es-ES', {
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </Text>
+          </View>
+
+          <TouchableOpacity
+            style={styles.editarPerfilButton}
+            onPress={() => router.push(`/admin/trabajadores/editar?id=${id}`)}
+            accessibilityRole="button"
+            accessibilityLabel="Editar perfil del staff"
+          >
+            <Ionicons name="create-outline" size={20} color={HoffColors.white} style={styles.buttonIcon} />
+            <Text style={styles.editarPerfilButtonText}>Editar perfil</Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.card}>
@@ -176,7 +246,7 @@ export default function DetalleTrabajadorScreen() {
             <Text style={styles.sectionTitle}>Estadísticas</Text>
           </View>
           <Text style={styles.helperText}>
-            Ver estadísticas detalladas del trabajador, incluyendo tareas aprobadas y horas trabajadas por período
+            Ver estadísticas detalladas del staff, incluyendo tareas aprobadas y horas trabajadas por período
           </Text>
           <TouchableOpacity
             style={styles.estadisticasButton}
@@ -196,68 +266,12 @@ export default function DetalleTrabajadorScreen() {
             <Ionicons name="lock-closed-outline" size={20} color={HoffColors.primary} />
             <Text style={styles.sectionTitle}>Credenciales de acceso</Text>
           </View>
-          <Text style={styles.helperText}>Ver las credenciales de acceso del trabajador</Text>
+          <Text style={styles.helperText}>
+            Restablecer contraseña del staff con reautenticación de administrador
+          </Text>
           <TouchableOpacity style={styles.credencialesButton} onPress={() => setShowCredencialesModal(true)}>
             <Ionicons name="eye-outline" size={18} color={HoffColors.white} style={styles.buttonIcon} />
-            <Text style={styles.credencialesButtonText}>Ver credenciales</Text>
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.card}>
-          <View style={styles.estadoContainer}>
-            <Text style={styles.sectionTitle}>Estado del trabajador</Text>
-            <View style={styles.estadoRow}>
-              <Text style={styles.estadoLabel}>
-                {activo ? 'Trabajador activo' : 'Trabajador desactivado'}
-              </Text>
-              <TouchableOpacity
-                style={[styles.estadoButton, activo ? styles.estadoButtonActive : styles.estadoButtonInactive]}
-                onPress={() => {
-                  if (activo) {
-                    Alert.alert(
-                      '¿Desactivar trabajador?',
-                      'Al desactivar el trabajador, no podrá iniciar sesión ni ser asignado a nuevas tareas. El trabajador no aparecerá en las listas de selección pero podrá ser reactivado más adelante.',
-                      [
-                        { text: 'Cancelar', style: 'cancel' },
-                        {
-                          text: 'Desactivar',
-                          style: 'destructive',
-                          onPress: () => setActivo(false),
-                        },
-                      ]
-                    );
-                  } else {
-                    setActivo(true);
-                  }
-                }}
-              >
-                <Text style={[styles.estadoButtonText, !activo && styles.estadoButtonTextInactive]}>
-                  {activo ? 'Desactivar' : 'Activar'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-            {!activo && (
-              <Text style={styles.estadoHelperText}>
-                Este trabajador está desactivado y no aparecerá en las listas de selección.
-              </Text>
-            )}
-          </View>
-        </View>
-
-        <View style={styles.actionsContainer}>
-          <TouchableOpacity style={styles.cancelButton} onPress={() => router.back()}>
-            <Text style={styles.cancelButtonText}>Cancelar</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.submitButton, saving && styles.submitButtonDisabled]}
-            onPress={handleSubmit}
-            disabled={saving}
-          >
-            {saving ? (
-              <ActivityIndicator color={HoffColors.white} />
-            ) : (
-              <Text style={styles.submitButtonText}>Guardar cambios</Text>
-            )}
+            <Text style={styles.credencialesButtonText}>Restablecer contraseña</Text>
           </TouchableOpacity>
         </View>
 
@@ -265,13 +279,13 @@ export default function DetalleTrabajadorScreen() {
           visible={showCredencialesModal}
           transparent
           animationType="slide"
-          onRequestClose={() => setShowCredencialesModal(false)}
+          onRequestClose={closeCredencialesModal}
         >
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.sectionTitleRow}>
                 <Ionicons name="lock-closed-outline" size={22} color={HoffColors.primary} />
-                <Text style={styles.modalTitle}>Credenciales de acceso</Text>
+                <Text style={styles.modalTitle}>Restablecer contraseña</Text>
               </View>
 
               <View style={styles.credencialesInfo}>
@@ -280,22 +294,62 @@ export default function DetalleTrabajadorScreen() {
                   <Text style={styles.credencialesValue}>@{trabajador.usuario}</Text>
                 </View>
 
-                <Text style={styles.credencialesLabel}>Contraseña</Text>
-                <View style={styles.credencialesPasswordContainer}>
-                  <Text style={styles.credencialesPasswordText}>••••••••••••</Text>
-                  <Text style={styles.credencialesPasswordHelper}>
-                    La contraseña está encriptada por seguridad. Para cambiarla, el trabajador debe usar la opción de
-                    cambiar contraseña en su perfil.
-                  </Text>
-                </View>
+                <Text style={styles.credencialesLabel}>Tu contraseña de admin</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Confirma tu contraseña"
+                  placeholderTextColor={HoffColors.textMuted}
+                  secureTextEntry
+                  value={adminPassword}
+                  onChangeText={setAdminPassword}
+                  editable={!resettingPassword}
+                />
+                <Text style={styles.credencialesLabel}>Nueva contraseña del staff</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Mínimo 6 caracteres"
+                  placeholderTextColor={HoffColors.textMuted}
+                  secureTextEntry
+                  value={newWorkerPassword}
+                  onChangeText={setNewWorkerPassword}
+                  editable={!resettingPassword}
+                />
+                <Text style={styles.credencialesPasswordHelper}>
+                  La contraseña actual no se puede ver por seguridad. Este proceso crea una nueva contraseña.
+                </Text>
               </View>
 
-              <TouchableOpacity style={styles.modalCloseButton} onPress={() => setShowCredencialesModal(false)}>
-                <Text style={styles.modalCloseButtonText}>Cerrar</Text>
-              </TouchableOpacity>
+              <View style={styles.modalActionsRow}>
+                <TouchableOpacity
+                  style={styles.modalSecondaryButton}
+                  onPress={closeCredencialesModal}
+                  disabled={resettingPassword}
+                >
+                  <Text style={styles.modalSecondaryButtonText}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalCloseButton, resettingPassword && styles.modalCloseButtonDisabled]}
+                  onPress={handleResetPassword}
+                  disabled={resettingPassword}
+                >
+                  {resettingPassword ? (
+                    <ActivityIndicator color={HoffColors.white} />
+                  ) : (
+                    <Text style={styles.modalCloseButtonText}>Restablecer</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </Modal>
+
+        <InfoModal
+          visible={infoModal.visible}
+          title={infoModal.title}
+          message={infoModal.message}
+          variant={infoModal.variant}
+          onPrimary={closeInfoModal}
+        />
       </ScrollView>
     </TaskScreenContainer>
   );
@@ -340,12 +394,70 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: HoffColors.text,
   },
-  label: {
-    fontSize: 14,
-    fontWeight: '500',
+  avatarBlock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: taskSpacing.lg,
+    marginBottom: taskSpacing.lg,
+    paddingVertical: taskSpacing.sm,
+  },
+  avatarMeta: {
+    flex: 1,
+    gap: taskSpacing.sm,
+  },
+  displayName: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: HoffColors.text,
+  },
+  estadoBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: taskSpacing.md,
+    paddingVertical: taskSpacing.xs,
+    borderRadius: taskRadius.sm,
+  },
+  estadoBadgeActivo: {
+    backgroundColor: 'rgba(46, 125, 50, 0.12)',
+    borderWidth: 1,
+    borderColor: HoffColors.primary,
+  },
+  estadoBadgeInactivo: {
+    backgroundColor: 'rgba(120, 120, 120, 0.12)',
+    borderWidth: 1,
+    borderColor: HoffColors.border,
+  },
+  estadoBadgeText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: HoffColors.primaryDark,
+  },
+  estadoBadgeTextInactivo: {
     color: HoffColors.textSecondary,
+  },
+  infoRow: {
     marginTop: taskSpacing.md,
+    paddingTop: taskSpacing.md,
+    borderTopWidth: 1,
+    borderTopColor: HoffColors.border,
+  },
+  label: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: HoffColors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
     marginBottom: taskSpacing.xs,
+  },
+  value: {
+    fontSize: 16,
+    color: HoffColors.text,
+    fontWeight: '500',
+  },
+  valueMultiline: {
+    fontSize: 16,
+    color: HoffColors.text,
+    fontWeight: '500',
+    lineHeight: 22,
   },
   helperText: {
     fontSize: 12,
@@ -362,41 +474,22 @@ const styles = StyleSheet.create({
     backgroundColor: HoffColors.surface,
     color: HoffColors.text,
   },
-  textArea: {
-    borderWidth: 1,
-    borderColor: HoffColors.border,
-    borderRadius: taskRadius.sm,
-    padding: taskSpacing.md,
-    fontSize: 16,
-    backgroundColor: HoffColors.surface,
-    color: HoffColors.text,
-    minHeight: 100,
-  },
-  usuarioContainer: {
-    backgroundColor: HoffColors.background,
-    borderRadius: taskRadius.sm,
-    padding: taskSpacing.md,
-    marginTop: taskSpacing.xs,
-    borderWidth: 1,
-    borderColor: HoffColors.border,
-  },
-  usuarioText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: HoffColors.text,
-  },
-  usuarioHelper: {
-    fontSize: 12,
-    color: HoffColors.textMuted,
-    marginTop: taskSpacing.xs,
-  },
-  infoText: {
-    fontSize: 14,
-    color: HoffColors.textSecondary,
-    marginTop: taskSpacing.xs,
-  },
   buttonIcon: {
     marginRight: taskSpacing.xs,
+  },
+  editarPerfilButton: {
+    marginTop: taskSpacing.xl,
+    backgroundColor: HoffColors.primary,
+    padding: taskSpacing.md + 4,
+    borderRadius: taskRadius.lg,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+  },
+  editarPerfilButtonText: {
+    color: HoffColors.white,
+    fontSize: 16,
+    fontWeight: '700',
   },
   credencialesButton: {
     backgroundColor: HoffColors.primary,
@@ -425,88 +518,6 @@ const styles = StyleSheet.create({
     color: HoffColors.white,
     fontSize: 16,
     fontWeight: '600',
-  },
-  estadoContainer: {
-    marginTop: taskSpacing.sm,
-  },
-  estadoRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: taskSpacing.md,
-    flexWrap: 'wrap',
-    gap: taskSpacing.sm,
-  },
-  estadoLabel: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: HoffColors.text,
-    flex: 1,
-    minWidth: 120,
-  },
-  estadoButton: {
-    paddingHorizontal: taskSpacing.lg,
-    paddingVertical: taskSpacing.sm + 2,
-    borderRadius: taskRadius.sm,
-  },
-  estadoButtonActive: {
-    backgroundColor: 'rgba(198, 40, 40, 0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(198, 40, 40, 0.35)',
-  },
-  estadoButtonInactive: {
-    backgroundColor: 'rgba(46, 125, 50, 0.1)',
-    borderWidth: 1,
-    borderColor: HoffColors.primary,
-  },
-  estadoButtonText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#C62828',
-  },
-  estadoButtonTextInactive: {
-    color: HoffColors.primaryDark,
-  },
-  estadoHelperText: {
-    fontSize: 12,
-    color: HoffColors.textMuted,
-    marginTop: taskSpacing.sm,
-    fontStyle: 'italic',
-  },
-  actionsContainer: {
-    flexDirection: 'row',
-    gap: taskSpacing.md,
-    marginTop: taskSpacing.sm,
-    marginBottom: taskSpacing.xxl,
-  },
-  cancelButton: {
-    flex: 1,
-    backgroundColor: HoffColors.background,
-    padding: taskSpacing.lg,
-    borderRadius: taskRadius.lg,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: HoffColors.border,
-  },
-  cancelButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: HoffColors.textSecondary,
-  },
-  submitButton: {
-    flex: 1,
-    backgroundColor: HoffColors.primary,
-    padding: taskSpacing.lg,
-    borderRadius: taskRadius.lg,
-    alignItems: 'center',
-  },
-  submitButtonDisabled: {
-    opacity: 0.6,
-  },
-  submitButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: HoffColors.white,
   },
   modalOverlay: {
     flex: 1,
@@ -553,33 +564,41 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: HoffColors.text,
   },
-  credencialesPasswordContainer: {
-    backgroundColor: HoffColors.background,
-    borderRadius: taskRadius.sm,
-    padding: taskSpacing.md,
-    borderWidth: 1,
-    borderColor: HoffColors.border,
-  },
-  credencialesPasswordText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: HoffColors.text,
-    letterSpacing: 4,
-    marginBottom: taskSpacing.sm,
-  },
   credencialesPasswordHelper: {
     fontSize: 12,
     color: HoffColors.textMuted,
     fontStyle: 'italic',
   },
   modalCloseButton: {
+    flex: 1,
     backgroundColor: HoffColors.primary,
     padding: taskSpacing.md + 2,
     borderRadius: taskRadius.sm,
     alignItems: 'center',
   },
+  modalCloseButtonDisabled: {
+    opacity: 0.6,
+  },
   modalCloseButtonText: {
     color: HoffColors.white,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalActionsRow: {
+    flexDirection: 'row',
+    gap: taskSpacing.md,
+  },
+  modalSecondaryButton: {
+    flex: 1,
+    backgroundColor: HoffColors.background,
+    padding: taskSpacing.md + 2,
+    borderRadius: taskRadius.sm,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: HoffColors.border,
+  },
+  modalSecondaryButtonText: {
+    color: HoffColors.textSecondary,
     fontSize: 16,
     fontWeight: '600',
   },

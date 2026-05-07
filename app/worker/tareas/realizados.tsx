@@ -6,7 +6,6 @@ import {
   ScrollView,
   ActivityIndicator,
   RefreshControl,
-  Alert,
   useWindowDimensions,
   TouchableOpacity,
 } from 'react-native';
@@ -29,6 +28,7 @@ import {
   TaskSearchField,
   TaskFilterChipRow,
   TaskFiltersPanel,
+  InfoModal,
   type TaskFilterChipItem,
 } from '@/components/tareas';
 
@@ -48,7 +48,34 @@ export default function TrabajosRealizadosScreen() {
   const [panelOpen, setPanelOpen] = useState(false);
   const [draftSearchQuery, setDraftSearchQuery] = useState('');
   const [draftDateFilter, setDraftDateFilter] = useState<FilterDate>('todas');
+  const [infoModal, setInfoModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    variant: 'info' | 'success' | 'warning' | 'error';
+    onClose?: () => void;
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    variant: 'info',
+  });
   const listInFlightRef = useRef(false);
+
+  const openInfoModal = (
+    title: string,
+    message: string,
+    variant: 'info' | 'success' | 'warning' | 'error' = 'info',
+    onClose?: () => void
+  ) => {
+    setInfoModal({ visible: true, title, message, variant, onClose });
+  };
+
+  const closeInfoModal = () => {
+    const cb = infoModal.onClose;
+    setInfoModal((prev) => ({ ...prev, visible: false, onClose: undefined }));
+    if (cb) cb();
+  };
 
   const loadTareas = useCallback(async () => {
     if (listInFlightRef.current) return;
@@ -63,7 +90,7 @@ export default function TrabajosRealizadosScreen() {
         }
       }
     } catch {
-      Alert.alert('Error', 'No se pudieron cargar los trabajos realizados');
+      openInfoModal('Error', 'No se pudieron cargar los trabajos realizados', 'error');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -88,9 +115,10 @@ export default function TrabajosRealizadosScreen() {
     if (searchQuery) {
       filtered = filtered.filter(
         (t) =>
-          t.cliente_nombre?.toLowerCase().includes(searchQuery.toLowerCase()) ||
           t.descripcion_general?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          t.direccion_completa?.toLowerCase().includes(searchQuery.toLowerCase())
+          t.direccion_completa?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          t.ciudad?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          String(t.id).includes(searchQuery)
       );
     }
 
@@ -306,15 +334,23 @@ export default function TrabajosRealizadosScreen() {
               >
                 <StatusPill label="Trabajo realizado" backgroundColor={HoffColors.primary} />
                 <Text style={styles.cardTitle} numberOfLines={1}>
-                  {tarea.cliente_nombre}
+                  {tarea.direccion_completa || `Tarea #${tarea.id}`}
                 </Text>
                 <Text style={styles.cardDescription} numberOfLines={2}>
                   {tarea.descripcion_general}
                 </Text>
                 <View style={styles.cardFooter}>
-                  <View style={styles.cardMetaRow}>
-                    <Ionicons name="calendar-outline" size={14} color={HoffColors.textSecondary} />
-                    <Text style={styles.cardDate}>{formatFecha(tarea.fecha_realizacion)}</Text>
+                  <View style={styles.cardMetaCol}>
+                    <View style={styles.cardMetaRow}>
+                      <Ionicons name="calendar-outline" size={14} color={HoffColors.textSecondary} />
+                      <Text style={styles.cardDate}>{formatFecha(tarea.fecha_realizacion)}</Text>
+                    </View>
+                    {tarea.hora_inicio ? (
+                      <View style={styles.cardMetaRow}>
+                        <Ionicons name="time-outline" size={14} color={HoffColors.textSecondary} />
+                        <Text style={styles.cardDate}>Inicio {tarea.hora_inicio}</Text>
+                      </View>
+                    ) : null}
                   </View>
                   <Text style={styles.detailsButtonText}>Más detalles</Text>
                 </View>
@@ -323,6 +359,13 @@ export default function TrabajosRealizadosScreen() {
           </View>
         )}
       </ScrollView>
+      <InfoModal
+        visible={infoModal.visible}
+        title={infoModal.title}
+        message={infoModal.message}
+        variant={infoModal.variant}
+        onPrimary={closeInfoModal}
+      />
     </View>
   );
 }
@@ -380,11 +423,16 @@ const styles = StyleSheet.create({
   cardFooter: {
     marginTop: 'auto',
   },
+  cardMetaCol: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+    marginBottom: taskSpacing.sm,
+  },
   cardMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginBottom: taskSpacing.sm,
   },
   cardDate: {
     fontSize: 12,

@@ -46,6 +46,12 @@ export default function TareasMenuScreen() {
             icon="checkmark-done-outline"
             onPress={() => router.push('/admin/tareas/realizados')}
           />
+          <TaskHubLinkRow
+            title="Contratos"
+            subtitle="Ver y gestionar contratos vinculados"
+            icon="document-text-outline"
+            onPress={() => router.push('/admin/contratos')}
+          />
         </View>
       </ScrollView>
     </TaskScreenContainer>

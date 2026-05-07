@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useLayoutEffect } from 'react';
+import React, { useState, useCallback, useLayoutEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,7 @@ import {
   ActivityIndicator,
   Modal,
   Pressable,
-  Alert,
+  TextInput,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -18,6 +18,7 @@ import { HoffColors } from '@/constants/theme';
 import { taskSpacing, taskRadius, taskShadowCard } from '@/constants/taskUi';
 import { TaskScreenContainer } from '@/components/tareas/TaskScreenContainer';
 import { ClienteAvatar } from '@/components/clientes/ClienteAvatar';
+import { ConfirmModal, InfoModal } from '@/components/tareas';
 
 function clienteDisplayName(cliente: {
   tipo: string;
@@ -36,16 +37,52 @@ export default function ClienteDetalleScreen() {
 
   const [cliente, setCliente] = useState<any | null>(null);
   const [numDirecciones, setNumDirecciones] = useState(0);
+  const [contratos, setContratos] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [showDesactivarConfirm, setShowDesactivarConfirm] = useState(false);
+  const [desactivando, setDesactivando] = useState(false);
+  const [contractStatusFilter, setContractStatusFilter] = useState<'todos' | 'activo' | 'cerrado' | 'pagado'>('todos');
+  const [contractSearch, setContractSearch] = useState('');
+  const [contractMenuOpen, setContractMenuOpen] = useState(false);
+  const [contractMenuTarget, setContractMenuTarget] = useState<any | null>(null);
+  const [contractActionLoadingId, setContractActionLoadingId] = useState<number | null>(null);
+  const [infoModal, setInfoModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    variant: 'info' | 'success' | 'warning' | 'error';
+    onClose?: () => void;
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    variant: 'info',
+  });
+
+  const openInfoModal = (
+    title: string,
+    message: string,
+    variant: 'info' | 'success' | 'warning' | 'error' = 'info',
+    onClose?: () => void
+  ) => {
+    setInfoModal({ visible: true, title, message, variant, onClose });
+  };
+
+  const closeInfoModal = () => {
+    const cb = infoModal.onClose;
+    setInfoModal((prev) => ({ ...prev, visible: false, onClose: undefined }));
+    if (cb) cb();
+  };
 
   const loadAll = useCallback(async () => {
     if (!id) return;
     try {
       setLoading(true);
-      const [resCliente, resDir] = await Promise.all([
+      const [resCliente, resDir, resContratos] = await Promise.all([
         api.getClienteById(Number(id)),
         api.getDireccionesByCliente(Number(id)),
+        api.getContratosByCliente(Number(id)),
       ]);
       if (resCliente.success && resCliente.data) {
         setCliente(resCliente.data);
@@ -57,9 +94,13 @@ export default function ClienteDetalleScreen() {
       } else {
         setNumDirecciones(0);
       }
+      if (resContratos.success && Array.isArray(resContratos.data)) {
+        setContratos(resContratos.data);
+      } else {
+        setContratos([]);
+      }
     } catch {
-      Alert.alert('Error', 'No se pudo cargar el cliente');
-      router.back();
+      openInfoModal('Error', 'No se pudo cargar el cliente', 'error', () => router.back());
     } finally {
       setLoading(false);
     }
@@ -86,6 +127,33 @@ export default function ClienteDetalleScreen() {
   }, [navigation]);
 
   const title = cliente ? clienteDisplayName(cliente) : '';
+  const contratosStats = useMemo(() => {
+    const total = contratos.length;
+    const activos = contratos.filter((c) => c.estado === 'activo').length;
+    const pagados = contratos.filter((c) => c.estado === 'pagado').length;
+    const valorTotal = contratos.reduce((acc, c) => acc + Number(c.valor_contrato || 0), 0);
+    return { total, activos, pagados, valorTotal };
+  }, [contratos]);
+
+  const contratosFiltrados = useMemo(() => {
+    const byStatus =
+      contractStatusFilter === 'todos'
+        ? contratos
+        : contratos.filter((c) => String(c.estado).toLowerCase() === contractStatusFilter);
+    const q = contractSearch.trim().toLowerCase();
+    if (!q) return byStatus;
+    return byStatus.filter((c) => {
+      const contratoId = String(c.id ?? '');
+      const desc = String(c.descripcion_contrato ?? '').toLowerCase();
+      const estado = String(c.estado ?? '').toLowerCase();
+      return contratoId.includes(q) || desc.includes(q) || estado.includes(q);
+    });
+  }, [contratos, contractStatusFilter, contractSearch]);
+
+  const openContractMenu = (contrato: any) => {
+    setContractMenuTarget(contrato);
+    setContractMenuOpen(true);
+  };
 
   const openEditar = () => {
     setMenuOpen(false);
@@ -100,28 +168,24 @@ export default function ClienteDetalleScreen() {
   const confirmDesactivar = () => {
     setMenuOpen(false);
     if (!cliente) return;
-    Alert.alert(
-      '¿Desactivar cliente?',
-      `«${title}»: al desactivar, sus direcciones se eliminarán salvo que estén en uso en alguna tarea. No aparecerá en las listas de selección; podrá reactivarse más adelante.`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Desactivar',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const res = await api.updateCliente(Number(id), { activo: false });
-              if (res.success) {
-                router.back();
-              }
-            } catch (e: unknown) {
-              const msg = e instanceof Error ? e.message : 'No se pudo desactivar';
-              Alert.alert('Error', msg);
-            }
-          },
-        },
-      ]
-    );
+    setShowDesactivarConfirm(true);
+  };
+
+  const confirmarDesactivar = async () => {
+    if (desactivando) return;
+    try {
+      setDesactivando(true);
+      const res = await api.updateCliente(Number(id), { activo: false });
+      if (res.success) {
+        setShowDesactivarConfirm(false);
+        router.back();
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'No se pudo desactivar';
+      openInfoModal('Error', msg, 'error');
+    } finally {
+      setDesactivando(false);
+    }
   };
 
   if (loading && !cliente) {
@@ -207,6 +271,106 @@ export default function ClienteDetalleScreen() {
             <Ionicons name="chevron-forward" size={20} color={HoffColors.primary} />
           </TouchableOpacity>
         </View>
+
+        <View style={styles.card}>
+          <Text style={styles.sectionHeading}>Contratos</Text>
+          <View style={styles.contractStatsGrid}>
+            <View style={styles.statTile}>
+              <Text style={styles.statValue}>{contratosStats.total}</Text>
+              <Text style={styles.statLabel}>Total</Text>
+            </View>
+            <View style={styles.statTile}>
+              <Text style={styles.statValue}>{contratosStats.activos}</Text>
+              <Text style={styles.statLabel}>Activos</Text>
+            </View>
+            <View style={styles.statTile}>
+              <Text style={styles.statValue}>{contratosStats.pagados}</Text>
+              <Text style={styles.statLabel}>Pagados</Text>
+            </View>
+            <View style={styles.statTile}>
+              <Text style={styles.statValue}>€{contratosStats.valorTotal.toFixed(0)}</Text>
+              <Text style={styles.statLabel}>Valor total</Text>
+            </View>
+          </View>
+
+          <View style={styles.contractFilterRow}>
+            {(['todos', 'activo', 'cerrado', 'pagado'] as const).map((status) => (
+              <TouchableOpacity
+                key={status}
+                style={[styles.contractFilterChip, contractStatusFilter === status && styles.contractFilterChipActive]}
+                onPress={() => setContractStatusFilter(status)}
+              >
+                <Text
+                  style={[
+                    styles.contractFilterChipText,
+                    contractStatusFilter === status && styles.contractFilterChipTextActive,
+                  ]}
+                >
+                  {status === 'todos' ? 'Todos' : status}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <TextInput
+            style={styles.contractSearchInput}
+            placeholder="Buscar por # contrato, estado o descripción"
+            value={contractSearch}
+            onChangeText={setContractSearch}
+            placeholderTextColor={HoffColors.textMuted}
+          />
+
+          {contratos.length === 0 ? (
+            <Text style={styles.bodyText}>No hay contratos vinculados a este cliente.</Text>
+          ) : contratosFiltrados.length === 0 ? (
+            <Text style={styles.bodyText}>No hay contratos para ese filtro o búsqueda.</Text>
+          ) : (
+            contratosFiltrados.map((c) => (
+              <View key={c.id} style={styles.contractCard}>
+                <View style={styles.contractCardHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.contractTitle}>Contrato #{c.id}</Text>
+                    <Text style={styles.contractMeta}>
+                      {c.descripcion_contrato?.trim() || 'Sin descripción'}
+                    </Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.contractBadge,
+                      c.estado === 'pagado'
+                        ? styles.contractBadgePaid
+                        : c.estado === 'cerrado'
+                        ? styles.contractBadgeClosed
+                        : styles.contractBadgeActive,
+                    ]}
+                  >
+                    <Text style={styles.contractBadgeText}>{String(c.estado).toUpperCase()}</Text>
+                  </View>
+                </View>
+                <View style={styles.contractRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.contractMeta}>Valor: €{Number(c.valor_contrato || 0).toFixed(2)}</Text>
+                    <Text style={styles.contractMeta}>
+                      Tareas: {Number(c.total_tareas || 0)} · Fechas:{' '}
+                      {c.fecha_inicio || '—'} a {c.fecha_fin || '—'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.contractMenuButton}
+                    onPress={() => openContractMenu(c)}
+                    disabled={contractActionLoadingId === c.id}
+                  >
+                    {contractActionLoadingId === c.id ? (
+                      <ActivityIndicator size="small" color={HoffColors.primary} />
+                    ) : (
+                      <Ionicons name="ellipsis-vertical" size={18} color={HoffColors.textSecondary} />
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))
+          )}
+        </View>
       </ScrollView>
 
       <Modal visible={menuOpen} transparent animationType="fade" onRequestClose={() => setMenuOpen(false)}>
@@ -233,6 +397,130 @@ export default function ClienteDetalleScreen() {
           </Pressable>
         </Pressable>
       </Modal>
+
+      <Modal
+        visible={contractMenuOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setContractMenuOpen(false)}
+      >
+        <Pressable style={styles.menuOverlay} onPress={() => setContractMenuOpen(false)}>
+          <Pressable style={styles.menuSheet} onPress={(e) => e.stopPropagation()}>
+            <Text style={styles.menuTitle} numberOfLines={1}>
+              {contractMenuTarget ? `Contrato #${contractMenuTarget.id}` : 'Contrato'}
+            </Text>
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => {
+                if (!contractMenuTarget) return;
+                setContractMenuOpen(false);
+                router.push(`/admin/contratos/detalle?id=${contractMenuTarget.id}`);
+              }}
+            >
+              <Ionicons name="eye-outline" size={22} color={HoffColors.text} />
+              <Text style={styles.menuRowText}>Ver contrato</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => {
+                if (!contractMenuTarget) return;
+                setContractMenuOpen(false);
+                router.push(`/admin/contratos/editar?id=${contractMenuTarget.id}`);
+              }}
+            >
+              <Ionicons name="create-outline" size={22} color={HoffColors.text} />
+              <Text style={styles.menuRowText}>Editar contrato</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.menuRow}
+              onPress={() => {
+                if (!contractMenuTarget) return;
+                setContractMenuOpen(false);
+                router.push(`/admin/contratos/detalle?id=${contractMenuTarget.id}`);
+              }}
+            >
+              <Ionicons name="list-outline" size={22} color={HoffColors.text} />
+              <Text style={styles.menuRowText}>Gestionar tareas</Text>
+            </TouchableOpacity>
+            {contractMenuTarget?.estado !== 'pagado' && (
+              <TouchableOpacity
+                style={styles.menuRow}
+                onPress={async () => {
+                  if (!contractMenuTarget) return;
+                  setContractActionLoadingId(Number(contractMenuTarget.id));
+                  setContractMenuOpen(false);
+                  try {
+                    const res = await api.pagarContrato(Number(contractMenuTarget.id), {});
+                    if (res.success) {
+                      openInfoModal('Contrato pagado', 'Se registró el pago del contrato.', 'success', loadAll);
+                    } else {
+                      openInfoModal('Error', res.error || 'No se pudo marcar como pagado', 'error');
+                    }
+                  } catch (e: unknown) {
+                    const msg = e instanceof Error ? e.message : 'No se pudo marcar como pagado';
+                    openInfoModal('Error', msg, 'error');
+                  } finally {
+                    setContractActionLoadingId(null);
+                  }
+                }}
+              >
+                <Ionicons name="checkmark-done-outline" size={22} color={HoffColors.text} />
+                <Text style={styles.menuRowText}>Marcar pagado</Text>
+              </TouchableOpacity>
+            )}
+            {contractMenuTarget?.estado !== 'cerrado' && contractMenuTarget?.estado !== 'pagado' && (
+              <TouchableOpacity
+                style={[styles.menuRow, styles.menuRowDanger]}
+                onPress={async () => {
+                  if (!contractMenuTarget) return;
+                  setContractActionLoadingId(Number(contractMenuTarget.id));
+                  setContractMenuOpen(false);
+                  try {
+                    const res = await api.cerrarContrato(Number(contractMenuTarget.id));
+                    if (res.success) {
+                      openInfoModal('Contrato cerrado', 'El contrato se cerró y quedó bloqueado.', 'success', loadAll);
+                    } else {
+                      openInfoModal('Error', res.error || 'No se pudo cerrar el contrato', 'error');
+                    }
+                  } catch (e: unknown) {
+                    const msg = e instanceof Error ? e.message : 'No se pudo cerrar el contrato';
+                    openInfoModal('Error', msg, 'error');
+                  } finally {
+                    setContractActionLoadingId(null);
+                  }
+                }}
+              >
+                <Ionicons name="lock-closed-outline" size={22} color="#c62828" />
+                <Text style={[styles.menuRowText, styles.menuRowTextDanger]}>Cerrar contrato</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={styles.menuCancel} onPress={() => setContractMenuOpen(false)}>
+              <Text style={styles.menuCancelText}>Cerrar</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
+      <ConfirmModal
+        visible={showDesactivarConfirm}
+        title="¿Desactivar cliente?"
+        message={`«${title}»: al desactivar, sus direcciones se eliminarán salvo que estén en uso en alguna tarea. No aparecerá en las listas de selección; podrá reactivarse más adelante.`}
+        confirmText="Desactivar"
+        cancelText="Cancelar"
+        destructive
+        loading={desactivando}
+        onCancel={() => {
+          if (desactivando) return;
+          setShowDesactivarConfirm(false);
+        }}
+        onConfirm={confirmarDesactivar}
+      />
+      <InfoModal
+        visible={infoModal.visible}
+        title={infoModal.title}
+        message={infoModal.message}
+        variant={infoModal.variant}
+        onPrimary={closeInfoModal}
+      />
     </TaskScreenContainer>
   );
 }
@@ -354,6 +642,168 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: HoffColors.primary,
+  },
+  contractRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderTopWidth: 1,
+    borderTopColor: HoffColors.border,
+    paddingTop: taskSpacing.sm,
+    marginTop: taskSpacing.sm,
+    gap: taskSpacing.sm,
+  },
+  contractStatsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: taskSpacing.sm,
+    marginBottom: taskSpacing.md,
+  },
+  statTile: {
+    minWidth: 90,
+    flex: 1,
+    borderWidth: 1,
+    borderColor: HoffColors.border,
+    borderRadius: taskRadius.md,
+    backgroundColor: HoffColors.background,
+    padding: taskSpacing.sm,
+  },
+  statValue: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: HoffColors.primary,
+  },
+  statLabel: {
+    marginTop: 2,
+    fontSize: 11,
+    color: HoffColors.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  contractFilterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: taskSpacing.xs,
+    marginBottom: taskSpacing.sm,
+  },
+  contractFilterChip: {
+    borderWidth: 1,
+    borderColor: HoffColors.border,
+    borderRadius: 999,
+    paddingHorizontal: taskSpacing.sm,
+    paddingVertical: 6,
+    backgroundColor: HoffColors.background,
+  },
+  contractFilterChipActive: {
+    backgroundColor: HoffColors.primary,
+    borderColor: HoffColors.primary,
+  },
+  contractFilterChipText: {
+    color: HoffColors.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  contractFilterChipTextActive: {
+    color: HoffColors.white,
+  },
+  contractSearchInput: {
+    borderWidth: 1,
+    borderColor: HoffColors.border,
+    borderRadius: taskRadius.sm,
+    paddingHorizontal: taskSpacing.md,
+    paddingVertical: taskSpacing.sm,
+    color: HoffColors.text,
+    backgroundColor: HoffColors.surface,
+    marginBottom: taskSpacing.sm,
+  },
+  contractCard: {
+    borderWidth: 1,
+    borderColor: HoffColors.border,
+    borderRadius: taskRadius.md,
+    backgroundColor: HoffColors.background,
+    padding: taskSpacing.md,
+    marginTop: taskSpacing.sm,
+  },
+  contractCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: taskSpacing.sm,
+  },
+  contractTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: HoffColors.text,
+  },
+  contractMeta: {
+    fontSize: 13,
+    color: HoffColors.textSecondary,
+    marginTop: 2,
+  },
+  contractBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderWidth: 1,
+  },
+  contractBadgeActive: {
+    backgroundColor: 'rgba(10,66,50,0.1)',
+    borderColor: HoffColors.primary,
+  },
+  contractBadgeClosed: {
+    backgroundColor: 'rgba(245,124,0,0.12)',
+    borderColor: '#F57C00',
+  },
+  contractBadgePaid: {
+    backgroundColor: 'rgba(46,125,50,0.12)',
+    borderColor: '#2E7D32',
+  },
+  contractBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: HoffColors.textSecondary,
+  },
+  contractMenuButton: {
+    borderWidth: 1,
+    borderColor: HoffColors.border,
+    borderRadius: 999,
+    width: 34,
+    height: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: HoffColors.surface,
+  },
+  contractPayButton: {
+    backgroundColor: HoffColors.primary,
+    borderRadius: taskRadius.sm,
+    paddingHorizontal: taskSpacing.md,
+    paddingVertical: taskSpacing.sm,
+  },
+  contractActionsCol: {
+    gap: taskSpacing.xs,
+    marginRight: taskSpacing.xs,
+  },
+  contractSecondaryButton: {
+    borderWidth: 1,
+    borderColor: HoffColors.border,
+    borderRadius: taskRadius.sm,
+    paddingHorizontal: taskSpacing.sm,
+    paddingVertical: taskSpacing.xs,
+    backgroundColor: HoffColors.background,
+  },
+  contractSecondaryButtonText: {
+    color: HoffColors.textSecondary,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  contractPayButtonText: {
+    color: HoffColors.white,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  contractPaid: {
+    color: HoffColors.primary,
+    fontSize: 12,
+    fontWeight: '700',
   },
   menuOverlay: {
     flex: 1,

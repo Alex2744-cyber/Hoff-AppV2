@@ -6,7 +6,6 @@ import {
   ScrollView,
   TextInput,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -14,6 +13,7 @@ import api from '../../../services/api';
 import { HoffColors } from '@/constants/theme';
 import { taskSpacing, taskRadius, taskShadowCard } from '@/constants/taskUi';
 import { TaskScreenContainer } from '@/components/tareas/TaskScreenContainer';
+import { InfoModal } from '@/components/tareas';
 import { ProfilePhotoFormSection } from '@/components/admin/ProfilePhotoFormSection';
 
 export default function EditarClienteScreen() {
@@ -34,6 +34,31 @@ export default function EditarClienteScreen() {
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [infoModal, setInfoModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    variant: 'info' | 'success' | 'warning' | 'error';
+    onClose?: () => void;
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    variant: 'info',
+  });
+
+  const openInfoModal = (
+    title: string,
+    message: string,
+    variant: 'info' | 'success' | 'warning' | 'error' = 'info',
+    onClose?: () => void
+  ) => setInfoModal({ visible: true, title, message, variant, onClose });
+
+  const closeInfoModal = () => {
+    const cb = infoModal.onClose;
+    setInfoModal((prev) => ({ ...prev, visible: false, onClose: undefined }));
+    if (cb) cb();
+  };
 
   useEffect(() => {
     if (id) {
@@ -61,8 +86,7 @@ export default function EditarClienteScreen() {
         setAdministradorEmail(cliente.administrador_email || '');
       }
     } catch {
-      Alert.alert('Error', 'No se pudo cargar el cliente');
-      router.back();
+      openInfoModal('Error', 'No se pudo cargar el cliente', 'error', () => router.back());
     } finally {
       setLoading(false);
     }
@@ -70,22 +94,22 @@ export default function EditarClienteScreen() {
 
   const handleSubmit = async () => {
     if (tipo === 'particular' && !nombre.trim()) {
-      Alert.alert('Error', 'El nombre completo es obligatorio');
+      openInfoModal('Error', 'El nombre completo es obligatorio', 'error');
       return;
     }
 
     if (tipo === 'empresa' && !nombreEmpresa.trim()) {
-      Alert.alert('Error', 'El nombre de la empresa es obligatorio');
+      openInfoModal('Error', 'El nombre de la empresa es obligatorio', 'error');
       return;
     }
 
     if (email && !email.includes('@')) {
-      Alert.alert('Error', 'El email no es válido');
+      openInfoModal('Error', 'El email no es válido', 'error');
       return;
     }
 
     if (administradorEmail && !administradorEmail.includes('@')) {
-      Alert.alert('Error', 'El email del administrador no es válido');
+      openInfoModal('Error', 'El email del administrador no es válido', 'error');
       return;
     }
 
@@ -117,11 +141,11 @@ export default function EditarClienteScreen() {
 
       if (response.success) {
         await loadCliente();
-        Alert.alert('Guardado', 'Los cambios se han guardado correctamente.');
+        openInfoModal('Guardado', 'Los cambios se han guardado correctamente.', 'success');
       }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'No se pudo actualizar el cliente';
-      Alert.alert('Error', msg);
+      openInfoModal('Error', msg, 'error');
     } finally {
       setSaving(false);
     }
@@ -298,6 +322,13 @@ export default function EditarClienteScreen() {
           </TouchableOpacity>
         </View>
       </ScrollView>
+      <InfoModal
+        visible={infoModal.visible}
+        title={infoModal.title}
+        message={infoModal.message}
+        variant={infoModal.variant}
+        onPrimary={closeInfoModal}
+      />
     </TaskScreenContainer>
   );
 }

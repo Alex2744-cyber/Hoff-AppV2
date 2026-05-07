@@ -64,3 +64,10 @@ export function validarFormatoTiempo(tiempo: string): boolean {
   const [horas, minutos] = tiempo.split(':').map(Number);
   return horas >= 0 && horas < 1000 && minutos >= 0 && minutos < 60;
 }
+
+/** Hora del día HH:MM (0–23 h). Vacío permitido. */
+export function validarFormatoHoraReloj(hora: string): boolean {
+  if (!hora || !hora.trim()) return true;
+  const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(hora.trim());
+  return Boolean(m);
+}

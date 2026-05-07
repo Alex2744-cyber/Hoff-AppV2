@@ -86,7 +86,7 @@ export default function TrabajadoresScreen() {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color={HoffColors.primary} />
-        <Text style={styles.loadingText}>Cargando trabajadores...</Text>
+        <Text style={styles.loadingText}>Cargando staff...</Text>
       </View>
     );
   }
@@ -97,7 +97,7 @@ export default function TrabajadoresScreen() {
         <View style={taskToolbarColumn}>
           <View style={styles.searchWrap}>
             <TaskSearchField
-              placeholder="Buscar trabajador..."
+              placeholder="Buscar staff..."
               value={searchQuery}
               onChangeText={setSearchQuery}
             />
@@ -170,7 +170,7 @@ export default function TrabajadoresScreen() {
           {filteredTrabajadores.length === 0 ? (
             <View style={styles.emptyContainer}>
               <Text style={styles.emptyText}>
-                {searchQuery ? 'No se encontraron trabajadores' : 'No hay trabajadores registrados'}
+                {searchQuery ? 'No se encontró staff' : 'No hay staff registrado'}
               </Text>
             </View>
           ) : (
@@ -243,7 +243,7 @@ export default function TrabajadoresScreen() {
         style={styles.fab}
         onPress={() => router.push('/admin/trabajadores/crear')}
         accessibilityRole="button"
-        accessibilityLabel="Crear trabajador"
+        accessibilityLabel="Crear staff"
       >
         <Ionicons name="add" size={28} color={HoffColors.white} />
       </TouchableOpacity>

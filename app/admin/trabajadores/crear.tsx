@@ -6,7 +6,6 @@ import {
   ScrollView,
   TextInput,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
@@ -14,6 +13,7 @@ import api from '@/services/api';
 import { HoffColors } from '@/constants/theme';
 import { taskSpacing, taskRadius, taskShadowCard } from '@/constants/taskUi';
 import { TaskScreenContainer } from '@/components/tareas/TaskScreenContainer';
+import { InfoModal } from '@/components/tareas';
 import { ProfilePhotoFormSection } from '@/components/admin/ProfilePhotoFormSection';
 
 export default function CrearTrabajadorScreen() {
@@ -21,21 +21,53 @@ export default function CrearTrabajadorScreen() {
   const [usuario, setUsuario] = useState('');
   const [password, setPassword] = useState('');
   const [nombre, setNombre] = useState('');
+  const [cargo, setCargo] = useState('');
+  const [fechaIngreso, setFechaIngreso] = useState('');
+  const [contactoEmergencia, setContactoEmergencia] = useState('');
   const [descripcion, setDescripcion] = useState('');
   const [fotoPerfil, setFotoPerfil] = useState('');
   const [saving, setSaving] = useState(false);
+  const [infoModal, setInfoModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    variant: 'info' | 'success' | 'warning' | 'error';
+    onClose?: () => void;
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    variant: 'info',
+  });
+
+  const openInfoModal = (
+    title: string,
+    message: string,
+    variant: 'info' | 'success' | 'warning' | 'error' = 'info',
+    onClose?: () => void
+  ) => setInfoModal({ visible: true, title, message, variant, onClose });
+
+  const closeInfoModal = () => {
+    const cb = infoModal.onClose;
+    setInfoModal((prev) => ({ ...prev, visible: false, onClose: undefined }));
+    if (cb) cb();
+  };
 
   const handleSubmit = async () => {
     if (!usuario.trim()) {
-      Alert.alert('Error', 'El usuario es requerido');
+      openInfoModal('Error', 'El usuario es requerido', 'error');
       return;
     }
     if (!password.trim()) {
-      Alert.alert('Error', 'La contraseña es requerida');
+      openInfoModal('Error', 'La contraseña es requerida', 'error');
       return;
     }
     if (!nombre.trim()) {
-      Alert.alert('Error', 'El nombre es requerido');
+      openInfoModal('Error', 'El nombre es requerido', 'error');
+      return;
+    }
+    if (fechaIngreso.trim() && !/^\d{4}-\d{2}-\d{2}$/.test(fechaIngreso.trim())) {
+      openInfoModal('Error', 'La fecha de ingreso debe tener formato YYYY-MM-DD', 'error');
       return;
     }
 
@@ -45,21 +77,25 @@ export default function CrearTrabajadorScreen() {
         usuario: usuario.trim(),
         password: password,
         nombre: nombre.trim(),
+        cargo: cargo.trim() || null,
+        fecha_ingreso: fechaIngreso.trim() || null,
+        contacto_emergencia: contactoEmergencia.trim() || null,
         descripcion: descripcion.trim() || null,
         foto_perfil: fotoPerfil.trim() || null,
       });
 
       if (response.success) {
-        Alert.alert(
-          'Trabajador creado',
-          'El trabajador se ha registrado correctamente.',
-          [{ text: 'OK', onPress: () => router.back() }]
+        openInfoModal(
+          'Staff creado',
+          'El miembro del staff se ha registrado correctamente.',
+          'success',
+          () => router.back()
         );
       } else {
-        Alert.alert('Error', response.error || 'No se pudo crear el trabajador');
+        openInfoModal('Error', response.error || 'No se pudo crear el staff', 'error');
       }
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'No se pudo crear el trabajador');
+      openInfoModal('Error', error.message || 'No se pudo crear el staff', 'error');
     } finally {
       setSaving(false);
     }
@@ -105,10 +141,50 @@ export default function CrearTrabajadorScreen() {
       </View>
 
       <View style={styles.card}>
-        <Text style={styles.label}>Descripción (opcional)</Text>
+        <Text style={styles.label}>Cargo o posición (opcional)</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="Ej: Limpieza senior"
+          value={cargo}
+          onChangeText={setCargo}
+          placeholderTextColor={HoffColors.textMuted}
+        />
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.label}>Fecha de ingreso (opcional)</Text>
+        <TextInput
+          style={styles.input}
+          placeholder="YYYY-MM-DD"
+          value={fechaIngreso}
+          onChangeText={setFechaIngreso}
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholderTextColor={HoffColors.textMuted}
+        />
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.label}>Contacto de emergencia (opcional)</Text>
+        <Text style={styles.fieldHint}>Nombre, teléfono o persona a avisar (máx. 255 caracteres)</Text>
         <TextInput
           style={styles.textArea}
-          placeholder="Notas internas sobre el trabajador..."
+          placeholder="Ej: María Pérez — 612 345 678"
+          value={contactoEmergencia}
+          onChangeText={setContactoEmergencia}
+          multiline
+          numberOfLines={3}
+          textAlignVertical="top"
+          maxLength={255}
+          placeholderTextColor={HoffColors.textMuted}
+        />
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.label}>Información relevante (opcional)</Text>
+        <TextInput
+          style={styles.textArea}
+          placeholder="Notas o información relevante sobre el staff..."
           value={descripcion}
           onChangeText={setDescripcion}
           multiline
@@ -137,11 +213,18 @@ export default function CrearTrabajadorScreen() {
           {saving ? (
             <ActivityIndicator color={HoffColors.white} />
           ) : (
-            <Text style={styles.submitButtonText}>Crear trabajador</Text>
+            <Text style={styles.submitButtonText}>Crear staff</Text>
           )}
         </TouchableOpacity>
       </View>
     </ScrollView>
+    <InfoModal
+      visible={infoModal.visible}
+      title={infoModal.title}
+      message={infoModal.message}
+      variant={infoModal.variant}
+      onPrimary={closeInfoModal}
+    />
     </TaskScreenContainer>
   );
 }
@@ -167,6 +250,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: HoffColors.text,
+    marginBottom: taskSpacing.sm,
+  },
+  fieldHint: {
+    fontSize: 12,
+    color: HoffColors.textMuted,
+    marginTop: -taskSpacing.xs,
     marginBottom: taskSpacing.sm,
   },
   input: {

@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -18,16 +17,44 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '@/contexts/AuthContext';
 import { HoffColors } from '@/constants/theme';
 import { taskContentMaxWidth, taskSpacing, taskRadius, taskShadowCard } from '@/constants/taskUi';
+import { InfoModal } from '@/components/tareas';
 
 export default function LoginScreen() {
   const [usuario, setUsuario] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [infoModal, setInfoModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    variant: 'info' | 'success' | 'warning' | 'error';
+    onClose?: () => void;
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    variant: 'info',
+  });
   const logoOpacity = useSharedValue(0);
   const logoScale = useSharedValue(0.92);
   const insets = useSafeAreaInsets();
 
   const { login } = useAuth();
+
+  const openInfoModal = (
+    title: string,
+    message: string,
+    variant: 'info' | 'success' | 'warning' | 'error' = 'info',
+    onClose?: () => void
+  ) => {
+    setInfoModal({ visible: true, title, message, variant, onClose });
+  };
+
+  const closeInfoModal = () => {
+    const cb = infoModal.onClose;
+    setInfoModal((prev) => ({ ...prev, visible: false, onClose: undefined }));
+    if (cb) cb();
+  };
 
   const logoAnimatedStyle = useAnimatedStyle(() => ({
     opacity: logoOpacity.value,
@@ -41,7 +68,7 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     if (!usuario || !password) {
-      Alert.alert('Error', 'Por favor ingresa usuario y contraseña');
+      openInfoModal('Error', 'Por favor ingresa usuario y contraseña', 'error');
       return;
     }
 
@@ -52,10 +79,10 @@ export default function LoginScreen() {
       if (success) {
         // _layout.tsx redirige según user.tipo a /admin/dashboard o /worker/dashboard
       } else {
-        Alert.alert('Error', 'Credenciales incorrectas');
+        openInfoModal('Error', 'Credenciales incorrectas', 'error');
       }
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'Error al iniciar sesión');
+      openInfoModal('Error', error.message || 'Error al iniciar sesión', 'error');
     } finally {
       setLoading(false);
     }
@@ -138,7 +165,7 @@ export default function LoginScreen() {
               </View>
               <View style={styles.devLine}>
                 <Ionicons name="briefcase-outline" size={16} color={HoffColors.textMuted} />
-                <Text style={styles.devText}>Trabajador: jperez / worker123</Text>
+                <Text style={styles.devText}>Staff: jperez / worker123</Text>
               </View>
               <View style={styles.devLine}>
                 <Ionicons name="shield-outline" size={16} color={HoffColors.textMuted} />
@@ -148,6 +175,13 @@ export default function LoginScreen() {
           ) : null}
         </View>
       </ScrollView>
+      <InfoModal
+        visible={infoModal.visible}
+        title={infoModal.title}
+        message={infoModal.message}
+        variant={infoModal.variant}
+        onPrimary={closeInfoModal}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -173,8 +207,8 @@ const styles = StyleSheet.create({
     marginBottom: taskSpacing.md,
   },
   logo: {
-    width: 140,
-    height: 140,
+    width: 240,
+    height: 240,
   },
   heroSubtitle: {
     fontSize: 15,

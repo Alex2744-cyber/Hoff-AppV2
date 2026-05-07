@@ -39,7 +39,7 @@ export default function AdminLayout() {
       <Tabs.Screen
         name="trabajadores"
         options={{
-          title: 'Trabajadores',
+          title: 'Staff',
           tabBarIcon: ({ color, size }) => (
             <TabBarIcon name="workers" color={color} size={size} />
           ),
@@ -95,6 +95,14 @@ export default function AdminLayout() {
           headerStyle: { backgroundColor: HoffColors.primary },
           headerTintColor: HoffColors.white,
           headerTitleStyle: { fontWeight: 'bold' },
+        }}
+      />
+      <Tabs.Screen
+        name="contratos"
+        options={{
+          href: null,
+          title: 'Contratos',
+          headerShown: false,
         }}
       />
     </Tabs>

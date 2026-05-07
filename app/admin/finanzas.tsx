@@ -7,12 +7,12 @@ import {
   ScrollView,
   ActivityIndicator,
   RefreshControl,
-  Alert,
   TouchableOpacity,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import api from '@/services/api';
 import { HoffColors } from '@/constants/theme';
+import { InfoModal } from '@/components/tareas';
 
 interface IngresosTotales {
   ingresos_totales: number;
@@ -58,6 +58,33 @@ export default function FinanzasScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
+  const [infoModal, setInfoModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    variant: 'info' | 'success' | 'warning' | 'error';
+    onClose?: () => void;
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    variant: 'info',
+  });
+
+  const openInfoModal = (
+    title: string,
+    message: string,
+    variant: 'info' | 'success' | 'warning' | 'error' = 'info',
+    onClose?: () => void
+  ) => {
+    setInfoModal({ visible: true, title, message, variant, onClose });
+  };
+
+  const closeInfoModal = () => {
+    const cb = infoModal.onClose;
+    setInfoModal((prev) => ({ ...prev, visible: false, onClose: undefined }));
+    if (cb) cb();
+  };
 
   const cargarIngresos = useCallback(async () => {
     try {
@@ -67,11 +94,11 @@ export default function FinanzasScreen() {
         if (n) setIngresos(n);
         else setIngresos(null);
       } else {
-        Alert.alert('Error', response.error || 'Error al cargar ingresos');
+        openInfoModal('Error', response.error || 'Error al cargar ingresos', 'error');
       }
     } catch (error) {
       console.error('Error cargando ingresos:', error);
-      Alert.alert('Error', 'Error al cargar ingresos');
+      openInfoModal('Error', 'Error al cargar ingresos', 'error');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -167,6 +194,13 @@ export default function FinanzasScreen() {
           </View>
         )}
       </View>
+      <InfoModal
+        visible={infoModal.visible}
+        title={infoModal.title}
+        message={infoModal.message}
+        variant={infoModal.variant}
+        onPrimary={closeInfoModal}
+      />
     </ScrollView>
   );
 }

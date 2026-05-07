@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   Image,
+  Platform,
 } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useFocusEffect } from '@react-navigation/native';
@@ -93,18 +94,20 @@ export default function WorkerDashboard() {
       >
         <View style={styles.header}>
           <View style={styles.heroPanel}>
-            <View style={styles.heroTitleRow}>
-              <Image
-                source={require('@/assets/images/logo.png')}
-                style={styles.companyLogo}
-                resizeMode="contain"
-              />
+            <View style={styles.heroBranding}>
+              <View style={styles.logoWrap}>
+                <Image
+                  source={require('@/assets/images/logo.png')}
+                  style={styles.companyLogo}
+                  resizeMode="contain"
+                />
+              </View>
               <View style={styles.heroBadge}>
                 <Ionicons name="sparkles-outline" size={14} color={HoffColors.accent} />
                 <Text style={styles.heroBadgeText}>Inicio</Text>
               </View>
             </View>
-            <Text style={styles.heroSubtitle}>Panel diario del trabajador</Text>
+            <Text style={styles.heroSubtitle}>Panel diario del staff</Text>
           </View>
           <View style={styles.summaryCard}>
             <Text style={styles.heading}>
@@ -158,7 +161,6 @@ export default function WorkerDashboard() {
 
 const styles = StyleSheet.create({
   scrollContent: {
-    flexGrow: 1,
     paddingTop: taskSpacing.sm,
     paddingBottom: taskSpacing.xl,
   },
@@ -168,22 +170,40 @@ const styles = StyleSheet.create({
   heroPanel: {
     backgroundColor: HoffColors.primary,
     borderRadius: 18,
-    paddingHorizontal: taskSpacing.md,
-    paddingTop: taskSpacing.md,
-    paddingBottom: taskSpacing.lg,
+    paddingHorizontal: taskSpacing.lg,
+    paddingTop: taskSpacing.lg,
+    paddingBottom: taskSpacing.xl,
+    ...(Platform.OS === 'web' ? { overflow: 'hidden' as const } : {}),
   },
-  heroTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    gap: taskSpacing.sm,
+  heroBranding: {
+    alignItems: 'center',
+    width: '100%',
+  },
+  logoWrap: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...Platform.select({
+      web: { alignSelf: 'center' },
+      default: { alignSelf: 'stretch' },
+    }),
   },
   companyLogo: {
-    width: 156,
-    height: 52,
-    alignSelf: 'flex-start',
+    alignSelf: 'center',
+    ...Platform.select({
+      web: {
+        width: 312,
+        height: 104,
+      },
+      default: {
+        width: '100%',
+        maxWidth: 336,
+        aspectRatio: 3,
+      },
+    }),
   },
   heroBadge: {
+    marginTop: taskSpacing.sm,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.14)',
@@ -202,17 +222,18 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
   },
   heroSubtitle: {
-    marginTop: taskSpacing.sm,
+    marginTop: taskSpacing.md,
     fontSize: 13,
     color: HoffColors.secondaryMuted,
     fontWeight: '600',
+    textAlign: 'center',
   },
   summaryCard: {
-    marginTop: -14,
-    marginHorizontal: taskSpacing.md,
+    marginTop: -(taskSpacing.lg + taskSpacing.sm),
+    marginHorizontal: taskSpacing.lg,
     backgroundColor: HoffColors.surface,
     borderRadius: 14,
-    paddingHorizontal: taskSpacing.md,
+    paddingHorizontal: taskSpacing.lg,
     paddingVertical: taskSpacing.md,
     borderWidth: 1,
     borderColor: HoffColors.border,
@@ -238,8 +259,10 @@ const styles = StyleSheet.create({
   },
   loader: {
     marginTop: taskSpacing.xl,
+    marginHorizontal: taskSpacing.lg,
   },
   list: {
     gap: taskSpacing.md,
+    marginHorizontal: taskSpacing.lg,
   },
 });

@@ -3,7 +3,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useState, useRef, useEffect } from 'react';
 import {
     ActivityIndicator,
-    Alert,
     Image,
     Linking,
     Modal,
@@ -28,6 +27,7 @@ import {
     TaskPrimaryButton,
     TaskSecondaryButton,
     TaskEvidenceViewer,
+    InfoModal,
 } from '@/components/tareas';
 import * as Haptics from 'expo-haptics';
 import {
@@ -49,6 +49,33 @@ export default function TareaDetalleScreen() {
     { uri: string; mimeType: string; fileName: string }[]
   >([]);
   const [subiendoEvidencia, setSubiendoEvidencia] = useState(false);
+  const [infoModal, setInfoModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    variant: 'info' | 'success' | 'warning' | 'error';
+    onClose?: () => void;
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    variant: 'info',
+  });
+
+  const openInfoModal = (
+    title: string,
+    message: string,
+    variant: 'info' | 'success' | 'warning' | 'error' = 'info',
+    onClose?: () => void
+  ) => {
+    setInfoModal({ visible: true, title, message, variant, onClose });
+  };
+
+  const closeInfoModal = () => {
+    const cb = infoModal.onClose;
+    setInfoModal((prev) => ({ ...prev, visible: false, onClose: undefined }));
+    if (cb) cb();
+  };
 
   const isFirstFocusRef = useRef(true);
   const detalleInFlightRef = useRef(false);
@@ -67,7 +94,7 @@ export default function TareaDetalleScreen() {
         setTarea(response.data);
       }
     } catch {
-      Alert.alert('Error', 'No se pudo cargar el detalle de la tarea');
+      openInfoModal('Error', 'No se pudo cargar el detalle de la tarea', 'error');
     } finally {
       if (!silent) setLoading(false);
       detalleInFlightRef.current = false;
@@ -122,14 +149,14 @@ export default function TareaDetalleScreen() {
         } catch {
           /* haptics opcional */
         }
-        Alert.alert(
+        openInfoModal(
           '¡Excelente!',
           'Tarea marcada como completada. El administrador la revisará pronto.',
-          [{ text: 'OK' }]
+          'success'
         );
       }
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'No se pudo completar la tarea');
+      openInfoModal('Error', error.message || 'No se pudo completar la tarea', 'error');
     } finally {
       setSubiendoEvidencia(false);
     }
@@ -138,7 +165,7 @@ export default function TareaDetalleScreen() {
   const handleAdjuntarEvidencia = async () => {
     const rem = MAX_TAREA_EVIDENCIAS - evidenciaLocal.length;
     if (rem < 1) {
-      Alert.alert('Límite alcanzado', `Máximo ${MAX_TAREA_EVIDENCIAS} imágenes.`);
+      openInfoModal('Límite alcanzado', `Máximo ${MAX_TAREA_EVIDENCIAS} imágenes.`, 'warning');
       return;
     }
     const picked = await pickTaskEvidencesFromLibrary(rem);
@@ -148,12 +175,6 @@ export default function TareaDetalleScreen() {
 
   const quitarEvidenciaLocal = (i: number) => {
     setEvidenciaLocal((prev) => prev.filter((_, j) => j !== i));
-  };
-
-  const handleLlamarCliente = () => {
-    if (tarea?.cliente_telefono) {
-      Linking.openURL(`tel:${tarea.cliente_telefono}`);
-    }
   };
 
   const handleAbrirMaps = () => {
@@ -192,6 +213,10 @@ export default function TareaDetalleScreen() {
   const enRevision = tarea.estado === 'completada' && !tarea.mensaje_rechazo;
   const aprobada = tarea.estado === 'aprobada';
   const esCancelada = tarea.estado === 'cancelada';
+  const miAsignacion =
+    tarea.trabajadores?.find(
+      (x: { id: number }) => Number(x.id) === Number(user?.id)
+    ) ?? tarea.trabajadores?.[0];
 
   return (
     <TaskScreenContainer bottomInsetExtra={72}>
@@ -240,60 +265,6 @@ export default function TareaDetalleScreen() {
         )}
       </TaskSection>
 
-      {/* Cliente */}
-      <TaskSection title="Cliente">
-        <Text style={styles.clientName}>{tarea.cliente_nombre}</Text>
-        <View style={styles.clientTypeRow}>
-          <Ionicons
-            name={tarea.cliente_tipo === 'empresa' ? 'business-outline' : 'person-outline'}
-            size={18}
-            color={HoffColors.textSecondary}
-            style={styles.clientTypeIcon}
-          />
-          <Text style={styles.clientType}>
-            {tarea.cliente_tipo === 'empresa' ? 'Empresa' : 'Particular'}
-          </Text>
-        </View>
-        {tarea.cliente_email && (
-          <View style={styles.detailInlineRow}>
-            <Ionicons name="mail-outline" size={18} color={HoffColors.textSecondary} />
-            <Text style={styles.clientEmail}>{tarea.cliente_email}</Text>
-          </View>
-        )}
-        {tarea.cliente_telefono && (
-          <TouchableOpacity style={styles.contactButton} onPress={handleLlamarCliente}>
-            <Ionicons name="call-outline" size={20} color={HoffColors.white} />
-            <Text style={styles.contactButtonText}>{tarea.cliente_telefono}</Text>
-          </TouchableOpacity>
-        )}
-      </TaskSection>
-
-      {/* Administrador (solo para empresas) */}
-      {tarea.cliente_tipo === 'empresa' && tarea.cliente_administrador_nombre && (
-        <TaskSection title="Administrador de la empresa">
-          <Text style={styles.clientName}>{tarea.cliente_administrador_nombre}</Text>
-          {tarea.cliente_administrador_telefono && (
-            <TouchableOpacity 
-              style={styles.contactButton} 
-              onPress={() => {
-                if (tarea.cliente_administrador_telefono) {
-                  Linking.openURL(`tel:${tarea.cliente_administrador_telefono}`);
-                }
-              }}
-            >
-              <Ionicons name="call-outline" size={20} color={HoffColors.white} />
-              <Text style={styles.contactButtonText}>{tarea.cliente_administrador_telefono}</Text>
-            </TouchableOpacity>
-          )}
-          {tarea.cliente_administrador_email && (
-            <View style={styles.detailInlineRow}>
-              <Ionicons name="mail-outline" size={18} color={HoffColors.textSecondary} />
-              <Text style={styles.clientEmail}>{tarea.cliente_administrador_email}</Text>
-            </View>
-          )}
-        </TaskSection>
-      )}
-
       {/* Ubicación */}
       <TaskSection title="Ubicación">
         <Text style={styles.address}>{tarea.direccion_completa}</Text>
@@ -314,61 +285,37 @@ export default function TareaDetalleScreen() {
             day: 'numeric',
           })}
         </Text>
+        <View style={{ marginTop: taskSpacing.sm }}>
+          <View style={styles.tiempoServicioLabelRow}>
+            <Ionicons name="time-outline" size={18} color={HoffColors.primary} />
+            <Text style={styles.tiempoServicioLabel}>Hora de inicio</Text>
+          </View>
+          <Text style={styles.tiempoServicioValue}>
+            {miAsignacion?.hora_inicio && String(miAsignacion.hora_inicio).trim()
+              ? String(miAsignacion.hora_inicio).trim()
+              : 'No indicada'}
+          </Text>
+        </View>
       </TaskSection>
-
-      {/* Equipo de trabajo */}
-      {tarea.trabajadores && tarea.trabajadores.length > 0 && (
-        <TaskSection title="Equipo de trabajo">
-          {tarea.trabajadores.map((trabajador: any) => (
-            <View key={trabajador.id} style={styles.workerItem}>
-              <View style={styles.workerNameRow}>
-                <Ionicons name="construct-outline" size={18} color={HoffColors.primary} />
-                <Text style={styles.workerName}>
-                  {trabajador.id === user?.id ? 'Tú · ' : ''}{trabajador.nombre}
-                </Text>
-              </View>
-            </View>
-          ))}
-          {/* Tiempo del servicio */}
-          {(() => {
-            const horasTrabajadores = tarea.trabajadores.map((trabajador: any) => {
-              return (
-                trabajador.horas_aprobadas ||
-                trabajador.horas_asignadas ||
-                (tarea.numero_horas ? tarea.numero_horas : 0)
-              );
-            });
-            const tiempoServicio = horasTrabajadores.length > 0 ? Math.max(...horasTrabajadores.map((h: any) => parseFloat(h) || 0)) : 0;
-            return tiempoServicio > 0 ? (
-              <View style={styles.tiempoServicioBox}>
-                <View style={styles.tiempoServicioLabelRow}>
-                  <Ionicons name="timer-outline" size={18} color={HoffColors.primary} />
-                  <Text style={styles.tiempoServicioLabel}>Tiempo del servicio</Text>
-                </View>
-                <Text style={styles.tiempoServicioValue}>{decimalATiempo(tiempoServicio)}</Text>
-              </View>
-            ) : null;
-          })()}
-        </TaskSection>
-      )}
 
       {/* Horas asignadas */}
       <TaskSection title="Horas asignadas">
-        {tarea.trabajadores && tarea.trabajadores.map((trabajador: any) => {
-          if (trabajador.id === user?.id) {
-            const horas =
-              trabajador.horas_aprobadas ||
-              trabajador.horas_asignadas ||
-              tarea.numero_horas ||
-              0;
-            return (
-              <Text key={trabajador.id} style={styles.hoursTotal}>
-                Tus horas: {decimalATiempo(parseFloat(horas))}
-              </Text>
-            );
-          }
-          return null;
-        })}
+        {miAsignacion ? (
+          <Text style={styles.hoursTotal}>
+            Tus horas:{' '}
+            {decimalATiempo(
+              parseFloat(
+                String(
+                  miAsignacion.horas_aprobadas ??
+                    miAsignacion.horas_asignadas ??
+                    0
+                )
+              ) || 0
+            )}
+          </Text>
+        ) : (
+          <Text style={styles.hoursNote}>Sin datos de horas para tu asignación.</Text>
+        )}
         {!puedeCompletar && !enRevision && !aprobada && !esCancelada && (
           <Text style={styles.hoursNote}>
             Puedes editar la asignación de horas desde el panel de administración hasta que la tarea se marque como completada.
@@ -581,6 +528,13 @@ export default function TareaDetalleScreen() {
           </View>
         </View>
       </Modal>
+      <InfoModal
+        visible={infoModal.visible}
+        title={infoModal.title}
+        message={infoModal.message}
+        variant={infoModal.variant}
+        onPrimary={closeInfoModal}
+      />
     </ScrollView>
     </TaskScreenContainer>
   );

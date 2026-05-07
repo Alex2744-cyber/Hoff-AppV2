@@ -6,7 +6,6 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   RefreshControl,
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
@@ -16,6 +15,7 @@ import { decimalATiempo } from '@/utils/tareas';
 import { HoffColors } from '@/constants/theme';
 import { taskSpacing, taskRadius, taskShadowCard } from '@/constants/taskUi';
 import { TaskScreenContainer } from '@/components/tareas/TaskScreenContainer';
+import { InfoModal } from '@/components/tareas';
 
 export default function EstadisticasTrabajadorScreen() {
   const { id } = useLocalSearchParams();
@@ -27,6 +27,33 @@ export default function EstadisticasTrabajadorScreen() {
   const [totalTareasAprobadas, setTotalTareasAprobadas] = useState(0);
   const [mes, setMes] = useState(new Date().getMonth() + 1);
   const [anio, setAnio] = useState(new Date().getFullYear());
+  const [infoModal, setInfoModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    variant: 'info' | 'success' | 'warning' | 'error';
+    onClose?: () => void;
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    variant: 'info',
+  });
+
+  const openInfoModal = (
+    title: string,
+    message: string,
+    variant: 'info' | 'success' | 'warning' | 'error' = 'info',
+    onClose?: () => void
+  ) => {
+    setInfoModal({ visible: true, title, message, variant, onClose });
+  };
+
+  const closeInfoModal = () => {
+    const cb = infoModal.onClose;
+    setInfoModal((prev) => ({ ...prev, visible: false, onClose: undefined }));
+    if (cb) cb();
+  };
 
   useEffect(() => {
     loadEstadisticas();
@@ -49,7 +76,7 @@ export default function EstadisticasTrabajadorScreen() {
         setTotalTareasAprobadas(extraT.total_tareas ?? 0);
       }
     } catch (error: any) {
-      Alert.alert('Error', 'No se pudieron cargar las estadísticas');
+      openInfoModal('Error', 'No se pudieron cargar las estadísticas', 'error');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -238,6 +265,13 @@ export default function EstadisticasTrabajadorScreen() {
           )}
         </View>
       </ScrollView>
+      <InfoModal
+        visible={infoModal.visible}
+        title={infoModal.title}
+        message={infoModal.message}
+        variant={infoModal.variant}
+        onPrimary={closeInfoModal}
+      />
     </TaskScreenContainer>
   );
 }

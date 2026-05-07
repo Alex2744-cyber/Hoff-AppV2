@@ -6,7 +6,6 @@ import {
   ScrollView,
   TextInput,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
   Modal,
 } from 'react-native';
@@ -16,6 +15,7 @@ import api from '../../../services/api';
 import { HoffColors } from '@/constants/theme';
 import { taskSpacing, taskRadius, taskShadowCard } from '@/constants/taskUi';
 import { TaskScreenContainer } from '@/components/tareas/TaskScreenContainer';
+import { InfoModal } from '@/components/tareas';
 import { buildDireccionCompleta } from '@/utils/buildDireccionCompleta';
 
 export default function ClienteDireccionesScreen() {
@@ -38,6 +38,33 @@ export default function ClienteDireccionesScreen() {
   const [savingDireccion, setSavingDireccion] = useState(false);
   const [deleteDireccionId, setDeleteDireccionId] = useState<number | null>(null);
   const [deletingDireccion, setDeletingDireccion] = useState(false);
+  const [infoModal, setInfoModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    variant: 'info' | 'success' | 'warning' | 'error';
+    onClose?: () => void;
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    variant: 'info',
+  });
+
+  const openInfoModal = (
+    title: string,
+    message: string,
+    variant: 'info' | 'success' | 'warning' | 'error' = 'info',
+    onClose?: () => void
+  ) => {
+    setInfoModal({ visible: true, title, message, variant, onClose });
+  };
+
+  const closeInfoModal = () => {
+    const cb = infoModal.onClose;
+    setInfoModal((prev) => ({ ...prev, visible: false, onClose: undefined }));
+    if (cb) cb();
+  };
 
   const loadDirecciones = useCallback(async () => {
     if (!id) return;
@@ -122,7 +149,7 @@ export default function ClienteDireccionesScreen() {
 
   const handleSaveDireccion = async () => {
     if (!calle.trim() || !ciudad.trim()) {
-      Alert.alert('Error', 'La calle y la ciudad son obligatorias.');
+      openInfoModal('Error', 'La calle y la ciudad son obligatorias.', 'error');
       return;
     }
 
@@ -154,7 +181,7 @@ export default function ClienteDireccionesScreen() {
       }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'No se pudo guardar la dirección';
-      Alert.alert('Error', msg);
+      openInfoModal('Error', msg, 'error');
     } finally {
       setSavingDireccion(false);
     }
@@ -175,7 +202,7 @@ export default function ClienteDireccionesScreen() {
       }
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : 'No se pudo eliminar la dirección';
-      Alert.alert('Error', msg);
+      openInfoModal('Error', msg, 'error');
     } finally {
       setDeletingDireccion(false);
     }
@@ -388,6 +415,13 @@ export default function ClienteDireccionesScreen() {
           </View>
         </View>
       </Modal>
+      <InfoModal
+        visible={infoModal.visible}
+        title={infoModal.title}
+        message={infoModal.message}
+        variant={infoModal.variant}
+        onPrimary={closeInfoModal}
+      />
     </TaskScreenContainer>
   );
 }

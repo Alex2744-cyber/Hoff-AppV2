@@ -70,7 +70,7 @@ export default function PerfilScreen() {
 
           <View style={styles.roleRow}>
             <Ionicons name="construct-outline" size={18} color={HoffColors.primary} />
-            <Text style={styles.roleText}>Trabajador</Text>
+            <Text style={styles.roleText}>Staff</Text>
           </View>
         </View>
 

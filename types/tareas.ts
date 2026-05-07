@@ -9,13 +9,19 @@ export interface TareaLista {
   tarea_id?: number;
   fecha_realizacion: string;
   estado: string;
-  cliente_nombre: string;
-  cliente_tipo: string;
+  /** Ausente en listados del trabajador (privacidad). */
+  cliente_nombre?: string;
+  cliente_tipo?: string;
   direccion_completa: string;
   ciudad: string;
   descripcion_general: string;
-  numero_horas: string | null;
-  valor_servicio: string;
+  numero_horas?: string | null;
+  valor_servicio?: string;
+  /** Asignación del trabajador autenticado (GET por trabajador). */
+  horas_asignadas?: number | string | null;
+  horas_aprobadas?: number | string | null;
+  /** HH:MM local acordado para iniciar (asignación). */
+  hora_inicio?: string | null;
   /** Solo en listados que usan vista completa; puede faltar en GET por trabajador. */
   trabajadores_asignados?: string | null;
   horas_registradas?: string;
@@ -39,6 +45,8 @@ export interface TareaTrabajadorDetalle {
   foto_perfil?: string | null;
   horas_asignadas?: number | string | null;
   horas_aprobadas?: number | string | null;
+  /** HH:MM */
+  hora_inicio?: string | null;
   notas?: string | null;
 }
 

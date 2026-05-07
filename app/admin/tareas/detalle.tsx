@@ -7,11 +7,11 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   Linking,
   TextInput,
   Modal,
   Platform,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -28,6 +28,10 @@ import {
   TaskPrimaryButton,
   TaskSecondaryButton,
   TaskEvidenceViewer,
+  ConfirmModal,
+  InfoModal,
+  TaskFilterChipRow,
+  TimePicker,
 } from '@/components/tareas';
 import {
   decimalATiempo,
@@ -35,7 +39,57 @@ import {
   getEstadoText,
   tiempoADecimal,
   validarFormatoTiempo,
+  validarFormatoHoraReloj,
 } from '@/utils/tareas';
+
+type AdminDetalleTab = 'vista' | 'staff';
+
+type TimeWheelTarget =
+  | { type: 'staffHoras'; trabajadorId: number }
+  | { type: 'staffInicio'; trabajadorId: number }
+  | { type: 'asignarHoras' }
+  | { type: 'asignarInicio' }
+  | { type: 'aprobarHoras'; trabajadorId: number };
+
+function parseDurationParts(s: string): { h: number; m: number } {
+  const t = (s || '0:00').trim();
+  if (!t.includes(':')) {
+    const d = parseFloat(t);
+    if (!Number.isFinite(d) || d < 0) return { h: 0, m: 0 };
+    const h = Math.floor(d);
+    let m = Math.round((d - h) * 60);
+    m = ((m % 60) + 60) % 60;
+    return { h, m };
+  }
+  const [a, b] = t.split(':');
+  const h = Math.min(999, Math.max(0, parseInt(a || '0', 10) || 0));
+  const m = Math.min(59, Math.max(0, parseInt(b || '0', 10) || 0));
+  return { h, m };
+}
+
+function parseClockParts(s: string): { h: number; m: number } {
+  const t = (s || '').trim();
+  if (!t) return { h: 9, m: 0 };
+  const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(t);
+  if (!m) return { h: 9, m: 0 };
+  return { h: parseInt(m[1], 10), m: parseInt(m[2], 10) };
+}
+
+function formatDurationHM(h: number, m: number): string {
+  return `${Math.max(0, h)}:${String(Math.max(0, Math.min(59, m))).padStart(2, '0')}`;
+}
+
+function formatClockHM(h: number, m: number): string {
+  return `${String(Math.max(0, Math.min(23, h))).padStart(2, '0')}:${String(Math.max(0, Math.min(59, m))).padStart(2, '0')}`;
+}
+
+function clampDurationParts(h: number, m: number, maxTotalMin: number): { h: number; m: number } {
+  let total = h * 60 + m;
+  if (total <= maxTotalMin) return { h, m };
+  total = Math.max(0, maxTotalMin);
+  const hh = Math.floor(total / 60);
+  return { h: hh, m: total - hh * 60 };
+}
 
 export default function TareaDetalleScreen() {
   const { id } = useLocalSearchParams();
@@ -47,12 +101,14 @@ export default function TareaDetalleScreen() {
   const [notasAprobacion, setNotasAprobacion] = useState('');
   const [horasPorTrabajador, setHorasPorTrabajador] = useState<{[key: number]: number}>({});
   const [horasTiempoPorTrabajador, setHorasTiempoPorTrabajador] = useState<{[key: number]: string}>({});
+  const [horaInicioPorTrabajador, setHoraInicioPorTrabajador] = useState<{ [key: number]: string }>({});
   const [showDevolverModal, setShowDevolverModal] = useState(false);
   const [mensajeRechazo, setMensajeRechazo] = useState('');
   const [showAsignarModal, setShowAsignarModal] = useState(false);
   const [trabajadores, setTrabajadores] = useState<any[]>([]);
   const [trabajadorSeleccionado, setTrabajadorSeleccionado] = useState<number | null>(null);
   const [horasAsignar, setHorasAsignar] = useState('0:00');
+  const [horaInicioAsignar, setHoraInicioAsignar] = useState('');
   const [loadingTrabajadores, setLoadingTrabajadores] = useState(false);
   const [savingAsignacion, setSavingAsignacion] = useState(false);
   const [showDesasignarModal, setShowDesasignarModal] = useState(false);
@@ -62,11 +118,113 @@ export default function TareaDetalleScreen() {
   } | null>(null);
   const [desasignando, setDesasignando] = useState(false);
   const [aprobando, setAprobando] = useState(false);
+  const [cancelando, setCancelando] = useState(false);
+  const [showCancelarConfirm, setShowCancelarConfirm] = useState(false);
+  const [showAprobarConfirm, setShowAprobarConfirm] = useState(false);
+  const [infoModal, setInfoModal] = useState<{
+    visible: boolean;
+    title: string;
+    message: string;
+    variant: 'info' | 'success' | 'warning' | 'error';
+    onClose?: () => void;
+  }>({
+    visible: false,
+    title: '',
+    message: '',
+    variant: 'info',
+  });
+  const [adminDetalleTab, setAdminDetalleTab] = useState<AdminDetalleTab>('vista');
+  const [savingHorasTrabajadorId, setSavingHorasTrabajadorId] = useState<number | null>(null);
+  const [timeWheelTarget, setTimeWheelTarget] = useState<TimeWheelTarget | null>(null);
+  const [timeWheelH, setTimeWheelH] = useState(0);
+  const [timeWheelM, setTimeWheelM] = useState(0);
+  const [timeWheelKey, setTimeWheelKey] = useState(0);
+
+  const maxMinutosDuracionTarea =
+    tarea?.numero_horas != null && Number.isFinite(Number(tarea.numero_horas))
+      ? Math.floor(Number(tarea.numero_horas) * 60)
+      : undefined;
+
+  const openTimeWheel = (target: TimeWheelTarget) => {
+    let h = 0;
+    let m = 0;
+    if (target.type === 'staffHoras' || target.type === 'aprobarHoras') {
+      const s = horasTiempoPorTrabajador[target.trabajadorId] || '0:00';
+      ({ h, m } = parseDurationParts(s));
+    } else if (target.type === 'staffInicio') {
+      const s = horaInicioPorTrabajador[target.trabajadorId] || '';
+      ({ h, m } = parseClockParts(s));
+    } else if (target.type === 'asignarHoras') {
+      ({ h, m } = parseDurationParts(horasAsignar));
+    } else if (target.type === 'asignarInicio') {
+      ({ h, m } = parseClockParts(horaInicioAsignar));
+    }
+    if (
+      maxMinutosDuracionTarea != null &&
+      (target.type === 'staffHoras' ||
+        target.type === 'aprobarHoras' ||
+        target.type === 'asignarHoras')
+    ) {
+      const c = clampDurationParts(h, m, maxMinutosDuracionTarea);
+      h = c.h;
+      m = c.m;
+    }
+    setTimeWheelH(h);
+    setTimeWheelM(m);
+    setTimeWheelKey((k) => k + 1);
+    setTimeWheelTarget(target);
+  };
+
+  const cerrarTimeWheel = () => {
+    setTimeWheelTarget(null);
+  };
+
+  const aplicarTimeWheel = () => {
+    if (!timeWheelTarget) return;
+    if (timeWheelTarget.type === 'staffHoras') {
+      updateHoras(timeWheelTarget.trabajadorId, formatDurationHM(timeWheelH, timeWheelM));
+    } else if (timeWheelTarget.type === 'staffInicio') {
+      updateHoraInicio(timeWheelTarget.trabajadorId, formatClockHM(timeWheelH, timeWheelM));
+    } else if (timeWheelTarget.type === 'asignarHoras') {
+      setHorasAsignar(formatDurationHM(timeWheelH, timeWheelM));
+    } else if (timeWheelTarget.type === 'asignarInicio') {
+      setHoraInicioAsignar(formatClockHM(timeWheelH, timeWheelM));
+    } else if (timeWheelTarget.type === 'aprobarHoras') {
+      updateHoras(timeWheelTarget.trabajadorId, formatDurationHM(timeWheelH, timeWheelM));
+    }
+    cerrarTimeWheel();
+  };
+
+  const quitarHoraInicioWheel = () => {
+    if (!timeWheelTarget) return;
+    if (timeWheelTarget.type === 'staffInicio') {
+      updateHoraInicio(timeWheelTarget.trabajadorId, '');
+    } else if (timeWheelTarget.type === 'asignarInicio') {
+      setHoraInicioAsignar('');
+    }
+    cerrarTimeWheel();
+  };
+
+  const openInfoModal = (
+    title: string,
+    message: string,
+    variant: 'info' | 'success' | 'warning' | 'error' = 'info',
+    onClose?: () => void
+  ) => {
+    setInfoModal({ visible: true, title, message, variant, onClose });
+  };
+
+  const closeInfoModal = () => {
+    const cb = infoModal.onClose;
+    setInfoModal((prev) => ({ ...prev, visible: false, onClose: undefined }));
+    if (cb) cb();
+  };
 
   const isFirstFocusRef = useRef(true);
   const detalleInFlightRef = useRef(false);
   useEffect(() => {
     isFirstFocusRef.current = true;
+    setAdminDetalleTab('vista');
   }, [id]);
 
   const loadTareaDetalle = useCallback(async (opts?: { silent?: boolean }) => {
@@ -82,21 +240,25 @@ export default function TareaDetalleScreen() {
         if (response.data.trabajadores) {
           const horasIniciales: { [key: number]: number } = {};
           const horasTiempoIniciales: { [key: number]: string } = {};
+          const horaIni: { [key: number]: string } = {};
           const n = Number(response.data.numero_horas);
           response.data.trabajadores.forEach((trabajador: any) => {
             const horasDecimal =
-              trabajador.horas_aprobadas ||
-              trabajador.horas_asignadas ||
+              trabajador.horas_aprobadas ??
+              trabajador.horas_asignadas ??
               (Number.isFinite(n) ? n : 0);
             horasIniciales[trabajador.id] = horasDecimal;
             horasTiempoIniciales[trabajador.id] = decimalATiempo(horasDecimal);
+            horaIni[trabajador.id] =
+              typeof trabajador.hora_inicio === 'string' ? trabajador.hora_inicio : '';
           });
           setHorasPorTrabajador(horasIniciales);
           setHorasTiempoPorTrabajador(horasTiempoIniciales);
+          setHoraInicioPorTrabajador(horaIni);
         }
       }
     } catch {
-      Alert.alert('Error', 'No se pudo cargar el detalle de la tarea');
+      openInfoModal('Error', 'No se pudo cargar el detalle de la tarea', 'error');
     } finally {
       if (!silent) setLoading(false);
       detalleInFlightRef.current = false;
@@ -138,34 +300,30 @@ export default function TareaDetalleScreen() {
     });
   };
 
+  const updateHoraInicio = (trabajadorId: number, value: string) => {
+    const filtered = value.replace(/[^0-9:]/g, '');
+    setHoraInicioPorTrabajador({
+      ...horaInicioPorTrabajador,
+      [trabajadorId]: filtered,
+    });
+  };
+
   const getTiempoServicio = () => {
     const horas = Object.values(horasPorTrabajador);
     return horas.length > 0 ? Math.max(...horas) : 0;
   };
 
-  const handleAprobarTarea = async () => {
+  const handleAprobarTarea = () => {
     if (!user?.id || user.tipo !== 'admin') {
-      Alert.alert('Error', 'Se requiere sesión de administrador para aprobar.');
+      openInfoModal('Error', 'Se requiere sesión de administrador para aprobar.', 'error');
       return;
     }
+    setShowAprobarConfirm(true);
+  };
 
+  const confirmarAprobarTarea = async () => {
+    if (!user?.id || user.tipo !== 'admin' || aprobando) return;
     const tiempoServicio = getTiempoServicio();
-    const mensajeConfirm = `Tiempo del servicio: ${tiempoServicio}h\n\n¿Confirmas que el trabajo se realizó correctamente? Esto creará un registro permanente.`;
-
-    // En web, Alert.alert con varios botones no siempre ejecuta onPress; usar confirm nativo del navegador.
-    let confirmado = false;
-    if (Platform.OS === 'web') {
-      confirmado = window.confirm(`¿Aprobar tarea?\n\n${mensajeConfirm}`);
-    } else {
-      confirmado = await new Promise<boolean>((resolve) => {
-        Alert.alert('¿Aprobar tarea?', mensajeConfirm, [
-          { text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) },
-          { text: 'Aprobar', style: 'default', onPress: () => resolve(true) },
-        ]);
-      });
-    }
-
-    if (!confirmado || aprobando) return;
 
     const horasArray = Object.entries(horasPorTrabajador)
       .map(([trabajadorId, horas]) => ({
@@ -184,27 +342,29 @@ export default function TareaDetalleScreen() {
       );
 
       if (!response?.success) {
-        Alert.alert(
+        openInfoModal(
           'Error',
-          (response as { error?: string })?.error || 'No se pudo aprobar la tarea'
+          (response as { error?: string })?.error || 'No se pudo aprobar la tarea',
+          'error'
         );
         return;
       }
 
       await refreshDetalle();
+      setShowAprobarConfirm(false);
       setNotasAprobacion('');
       try {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch {
         /* haptics opcional */
       }
-      Alert.alert(
+      openInfoModal(
         '¡Tarea aprobada!',
         `Registro permanente creado.\nTiempo del servicio: ${tiempoServicio}h`,
-        [{ text: 'OK' }]
+        'success'
       );
     } catch (error: any) {
-      Alert.alert('Error', error?.message || 'No se pudo aprobar la tarea');
+      openInfoModal('Error', error?.message || 'No se pudo aprobar la tarea', 'error');
     } finally {
       setAprobando(false);
     }
@@ -216,7 +376,7 @@ export default function TareaDetalleScreen() {
 
   const confirmarDevolver = async () => {
     if (!mensajeRechazo.trim()) {
-      Alert.alert('Error', 'Debes proporcionar un mensaje para devolver la tarea');
+      openInfoModal('Error', 'Debes proporcionar un mensaje para devolver la tarea', 'error');
       return;
     }
 
@@ -232,14 +392,14 @@ export default function TareaDetalleScreen() {
       if (response.success) {
         setMensajeRechazo('');
         await refreshDetalle();
-        Alert.alert(
+        openInfoModal(
           'Tarea devuelta',
-          'La tarea ha sido devuelta a los trabajadores con tu mensaje.',
-          [{ text: 'OK' }]
+          'La tarea ha sido devuelta al staff con tu mensaje.',
+          'success'
         );
       }
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'No se pudo devolver la tarea');
+      openInfoModal('Error', error.message || 'No se pudo devolver la tarea', 'error');
     }
   };
 
@@ -269,7 +429,7 @@ export default function TareaDetalleScreen() {
         setTrabajadores(disponibles);
       }
     } catch {
-      Alert.alert('Error', 'No se pudieron cargar los trabajadores');
+      openInfoModal('Error', 'No se pudo cargar la lista de staff', 'error');
     } finally {
       setLoadingTrabajadores(false);
     }
@@ -287,7 +447,7 @@ export default function TareaDetalleScreen() {
 
   const handleGuardarAsignacion = async () => {
     if (!trabajadorSeleccionado) {
-      Alert.alert('Error', 'Selecciona un trabajador');
+      openInfoModal('Error', 'Selecciona un miembro del staff', 'error');
       return;
     }
     if (savingAsignacion) return;
@@ -302,18 +462,26 @@ export default function TareaDetalleScreen() {
       horasParaApi = raw;
     }
 
+    const hi = horaInicioAsignar.trim();
+    if (hi && !validarFormatoHoraReloj(hi)) {
+      openInfoModal('Error', 'La hora de inicio debe ser HH:MM en formato 24 h (ej. 09:30).', 'error');
+      return;
+    }
+
     try {
       setSavingAsignacion(true);
       const response = await api.asignarTrabajador(
         Number(tarea.id),
         trabajadorSeleccionado,
-        horasParaApi
+        horasParaApi,
+        hi === '' ? null : hi
       );
 
       if (!response.success) {
-        Alert.alert(
+        openInfoModal(
           'Error',
-          (response as { error?: string }).error || 'No se pudo asignar el trabajador'
+          (response as { error?: string }).error || 'No se pudo asignar al staff',
+          'error'
         );
         return;
       }
@@ -322,14 +490,15 @@ export default function TareaDetalleScreen() {
       setShowAsignarModal(false);
       setTrabajadorSeleccionado(null);
       setHorasAsignar('0:00');
+      setHoraInicioAsignar('');
       try {
         await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch {
         /* haptics opcional */
       }
-      Alert.alert('Éxito', 'Trabajador asignado correctamente', [{ text: 'OK' }]);
+      openInfoModal('Éxito', 'Staff asignado correctamente', 'success');
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'No se pudo asignar el trabajador');
+      openInfoModal('Error', error.message || 'No se pudo asignar al staff', 'error');
     } finally {
       setSavingAsignacion(false);
     }
@@ -338,35 +507,51 @@ export default function TareaDetalleScreen() {
   const handleGuardarHorasAsignadas = async (trabajadorId: number) => {
     const tiempo = horasTiempoPorTrabajador[trabajadorId] || '0:00';
     if (!validarFormatoTiempo(tiempo)) {
-      Alert.alert('Error', 'Usa el formato de horas H:MM o HH:MM (ej. 3:30)');
+      openInfoModal('Error', 'Usa el formato de horas H:MM o HH:MM (ej. 3:30)', 'error');
       return;
     }
     const decimal = tiempoADecimal(tiempo);
     const maxH = tarea.numero_horas != null ? Number(tarea.numero_horas) : null;
     if (maxH != null && Number.isFinite(maxH) && decimal > maxH) {
-      Alert.alert(
+      openInfoModal(
         'Error',
-        `Las horas no pueden superar la duración de la tarea (${decimalATiempo(maxH)}).`
+        `Las horas no pueden superar la duración de la tarea (${decimalATiempo(maxH)}).`,
+        'error'
       );
       return;
     }
+    const hiRaw = (horaInicioPorTrabajador[trabajadorId] || '').trim();
+    if (hiRaw && !validarFormatoHoraReloj(hiRaw)) {
+      openInfoModal('Error', 'La hora de inicio debe ser HH:MM (24 h, ej. 09:30).', 'error');
+      return;
+    }
     try {
+      setSavingHorasTrabajadorId(trabajadorId);
       const response = await api.actualizarHorasTrabajador(
         Number(tarea.id),
         trabajadorId,
-        decimal
+        decimal,
+        { horaInicio: hiRaw === '' ? null : hiRaw }
       );
-      if (response.success) {
-        await refreshDetalle();
-        try {
-          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        } catch {
-          /* haptics opcional */
-        }
-        Alert.alert('Guardado', 'Horas del trabajador actualizadas');
+      if (!response.success) {
+        openInfoModal(
+          'Error',
+          (response as { error?: string }).error || 'No se pudo guardar la asignación',
+          'error'
+        );
+        return;
       }
+      await refreshDetalle();
+      try {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch {
+        /* haptics opcional */
+      }
+      openInfoModal('Guardado', 'Horas y horario actualizados', 'success');
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'No se pudieron actualizar las horas');
+      openInfoModal('Error', error.message || 'No se pudieron actualizar las horas', 'error');
+    } finally {
+      setSavingHorasTrabajadorId(null);
     }
   };
 
@@ -388,9 +573,10 @@ export default function TareaDetalleScreen() {
       setDesasignando(true);
       const response = await api.desasignarTrabajador(Number(tarea.id), desasignarTarget.id);
       if (!response.success) {
-        Alert.alert(
+        openInfoModal(
           'Error',
-          (response as { error?: string }).error || 'No se pudo desasignar el trabajador'
+          (response as { error?: string }).error || 'No se pudo desasignar al staff',
+          'error'
         );
         return;
       }
@@ -403,39 +589,45 @@ export default function TareaDetalleScreen() {
       } catch {
         /* haptics opcional */
       }
-      Alert.alert('Éxito', 'Trabajador desasignado', [{ text: 'OK' }]);
+      openInfoModal('Éxito', 'Staff desasignado', 'success');
     } catch (error: any) {
-      Alert.alert('Error', error.message || 'No se pudo desasignar el trabajador');
+      openInfoModal('Error', error.message || 'No se pudo desasignar al staff', 'error');
     } finally {
       setDesasignando(false);
     }
   };
 
   const handleCancelarTarea = () => {
-    Alert.alert(
-      '¿Cancelar tarea?',
-      'Esta acción cambiará el estado de la tarea a "cancelada". ¿Estás seguro?',
-      [
-        { text: 'No', style: 'cancel' },
-        {
-          text: 'Sí, cancelar',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const response = await api.cancelarTarea(Number(tarea.id));
-              if (response.success) {
-                await refreshDetalle();
-                Alert.alert('Éxito', 'Tarea cancelada', [
-                  { text: 'OK', onPress: () => router.back() }
-                ]);
-              }
-            } catch (error: any) {
-              Alert.alert('Error', error.message || 'No se pudo cancelar la tarea');
-            }
-          }
-        }
-      ]
-    );
+    if (!tarea?.id) return;
+    setShowCancelarConfirm(true);
+  };
+
+  const confirmarCancelarTarea = async () => {
+    if (!tarea?.id || cancelando) return;
+    try {
+      setCancelando(true);
+      const response = await api.cancelarTarea(Number(tarea.id));
+      if (!response.success) {
+        openInfoModal(
+          'Error',
+          (response as { error?: string }).error || 'No se pudo cancelar la tarea',
+          'error'
+        );
+        return;
+      }
+      await refreshDetalle();
+      setShowCancelarConfirm(false);
+      try {
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch {
+        /* haptics opcional */
+      }
+      router.back();
+    } catch (error: any) {
+      openInfoModal('Error', error.message || 'No se pudo cancelar la tarea', 'error');
+    } finally {
+      setCancelando(false);
+    }
   };
 
   const handleEditarTarea = () => {
@@ -462,6 +654,7 @@ export default function TareaDetalleScreen() {
       </View>
     );
   }
+  const esTareaContrato = !!tarea.contrato_id;
 
   const puedeAprobar = tarea.estado === 'completada';
   const aprobada = tarea.estado === 'aprobada';
@@ -477,6 +670,27 @@ export default function TareaDetalleScreen() {
         <StatusPill label={getEstadoText(tarea.estado)} backgroundColor={getEstadoColor(tarea.estado)} />
       </TaskSection>
 
+      <View style={styles.adminDetalleTabBar}>
+        <TaskFilterChipRow
+          chips={[
+            {
+              key: 'vista',
+              label: 'Vista',
+              active: adminDetalleTab === 'vista',
+              onPress: () => setAdminDetalleTab('vista'),
+            },
+            {
+              key: 'staff',
+              label: 'Staff y horarios',
+              active: adminDetalleTab === 'staff',
+              onPress: () => setAdminDetalleTab('staff'),
+            },
+          ]}
+        />
+      </View>
+
+      {adminDetalleTab === 'vista' && (
+      <>
       {/* Descripción */}
       <TaskSection title="Descripción del servicio">
         <Text style={styles.description}>{tarea.descripcion_general}</Text>
@@ -491,9 +705,20 @@ export default function TareaDetalleScreen() {
       {/* Información Financiera */}
       <TaskSection title="Información financiera">
         <View style={styles.financeRow}>
-          <Text style={styles.financeLabel}>Valor del servicio:</Text>
-          <Text style={styles.financeValue}>€{parseFloat(tarea.valor_servicio).toFixed(2)}</Text>
+          <Text style={styles.financeLabel}>{esTareaContrato ? 'Facturación:' : 'Valor del servicio:'}</Text>
+          <Text style={styles.financeValue}>
+            {esTareaContrato ? 'Facturado por contrato' : `€${parseFloat(tarea.valor_servicio).toFixed(2)}`}
+          </Text>
         </View>
+        {esTareaContrato && (
+          <TouchableOpacity
+            style={styles.linkButton}
+            onPress={() => router.push(`/admin/contratos/detalle?id=${tarea.contrato_id}`)}
+          >
+            <Text style={styles.linkButtonText}>Ver contrato vinculado</Text>
+            <Ionicons name="chevron-forward" size={20} color={HoffColors.primary} />
+          </TouchableOpacity>
+        )}
       </TaskSection>
 
       {/* Cliente */}
@@ -583,7 +808,7 @@ export default function TareaDetalleScreen() {
 
       {/* Equipo de trabajo */}
       {tarea.trabajadores && tarea.trabajadores.length > 0 && (
-        <TaskSection title="Trabajadores asignados">
+        <TaskSection title="Staff asignado">
           {tarea.trabajadores.map((trabajador: any) => (
             <View key={trabajador.id} style={styles.workerItem}>
               <View style={styles.workerNameRow}>
@@ -597,14 +822,17 @@ export default function TareaDetalleScreen() {
                     ? `${decimalATiempo(tarea.numero_horas)} (duración tarea)`
                     : 'Sin horas definidas'}
               </Text>
+              {trabajador.hora_inicio ? (
+                <Text style={styles.workerHours}>Inicio acordado: {trabajador.hora_inicio}</Text>
+              ) : null}
             </View>
           ))}
           {/* Tiempo del servicio */}
           {(() => {
             const horasTrabajadores = tarea.trabajadores.map((trabajador: any) => {
               return (
-                trabajador.horas_aprobadas ||
-                trabajador.horas_asignadas ||
+                trabajador.horas_aprobadas ??
+                trabajador.horas_asignadas ??
                 (tarea.numero_horas ? tarea.numero_horas : 0)
               );
             });
@@ -622,9 +850,9 @@ export default function TareaDetalleScreen() {
         </TaskSection>
       )}
 
-      {/* Comentarios del trabajador */}
+      {/* Comentarios del staff */}
       {tarea.comentarios_trabajador && (
-        <TaskSection title="Comentarios del trabajador">
+        <TaskSection title="Comentarios del staff">
           <View style={styles.comentariosBox}>
             <Text style={styles.comentariosText}>{tarea.comentarios_trabajador}</Text>
           </View>
@@ -661,7 +889,7 @@ export default function TareaDetalleScreen() {
         <TaskSection title="Aprobar trabajo">
           
           {/* Ajustar horas individuales */}
-          <Text style={styles.subsectionTitle}>Ajustar horas por trabajador:</Text>
+          <Text style={styles.subsectionTitle}>Ajustar horas por miembro del staff:</Text>
           <Text style={styles.hoursHelp}>
             Modifica las horas solo si es necesario. Por defecto se usan las horas asignadas.
           </Text>
@@ -670,14 +898,18 @@ export default function TareaDetalleScreen() {
             <View key={trabajador.id} style={styles.hoursAdjustRow}>
               <Text style={styles.trabajadorNombre}>{trabajador.nombre}</Text>
               <View style={styles.hoursInputContainer}>
-                <TextInput
-                  style={styles.hoursInput}
-                  value={horasTiempoPorTrabajador[trabajador.id] || '0:00'}
-                  onChangeText={(value) => updateHoras(trabajador.id, value)}
-                  keyboardType="default"
-                  placeholder="0:00"
-                />
-                <Text style={styles.hoursLabel}>h (formato: 3:30)</Text>
+                <TouchableOpacity
+                  style={styles.staffFieldTrigger}
+                  onPress={() => openTimeWheel({ type: 'aprobarHoras', trabajadorId: trabajador.id })}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Elegir horas a aprobar para ${trabajador.nombre}`}
+                >
+                  <Text style={styles.staffFieldTriggerText}>
+                    {horasTiempoPorTrabajador[trabajador.id] || '0:00'}
+                  </Text>
+                  <Ionicons name="time-outline" size={20} color={HoffColors.primary} />
+                </TouchableOpacity>
+                <Text style={styles.hoursLabel}>Toca para ajustar</Text>
               </View>
             </View>
           ))}
@@ -735,55 +967,6 @@ export default function TareaDetalleScreen() {
         </TaskSection>
       )}
 
-      {/* Modal para devolver tarea */}
-      <Modal
-        visible={showDevolverModal}
-        transparent={true}
-        animationType="slide"
-        onRequestClose={() => setShowDevolverModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Devolver Tarea</Text>
-            <Text style={styles.modalSubtitle}>
-              Escribe un mensaje explicando qué falta o qué necesita corregirse:
-            </Text>
-            
-            <TextInput
-              style={styles.mensajeInput}
-              placeholder="Ej: Falta subir imagen del baño, necesito ver foto del trabajo finalizado..."
-              multiline
-              numberOfLines={4}
-              value={mensajeRechazo}
-              onChangeText={setMensajeRechazo}
-              textAlignVertical="top"
-            />
-            
-            <View style={styles.modalButtons}>
-              <TouchableOpacity 
-                style={styles.modalCancelButton} 
-                onPress={() => {
-                  setShowDevolverModal(false);
-                  setMensajeRechazo('');
-                }}
-              >
-                <Text style={styles.modalCancelText}>Cancelar</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.modalConfirmButton} 
-                onPress={confirmarDevolver}
-              >
-                <View style={styles.modalConfirmInner}>
-                  <Ionicons name="arrow-undo-outline" size={18} color={HoffColors.white} />
-                  <Text style={styles.modalConfirmText}>Devolver</Text>
-                </View>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
       {/* Información del registro permanente si está aprobada */}
       {aprobada && tarea.registro_aprobacion && (
         <TaskSection title="Registro permanente de aprobación">
@@ -829,7 +1012,9 @@ export default function TareaDetalleScreen() {
             <View style={styles.infoBoxInner}>
               <Ionicons name="information-circle-outline" size={20} color={HoffColors.textSecondary} />
               <Text style={[styles.infoBoxText, { color: HoffColors.textSecondary }]}>
-                El valor del servicio (€{parseFloat(tarea.valor_servicio).toFixed(2)}) queda contabilizado en Finanzas al aprobar la tarea.
+                {esTareaContrato
+                  ? 'Esta tarea está vinculada a un contrato. El ingreso se contabiliza al registrar el pago del contrato.'
+                  : `El valor del servicio (€${parseFloat(tarea.valor_servicio).toFixed(2)}) queda contabilizado en Finanzas al aprobar la tarea.`}
               </Text>
             </View>
           </View>
@@ -849,12 +1034,12 @@ export default function TareaDetalleScreen() {
             />
             <TaskDetailRow
               icon="people-outline"
-              label="Trabajadores"
+              label="Staff"
               value={String(tarea.registro_aprobacion.numero_trabajadores)}
             />
           </View>
           
-          {/* Horas aprobadas finales por trabajador */}
+          {/* Horas aprobadas finales por miembro del staff */}
           {tarea.horas_aprobadas_finales && tarea.horas_aprobadas_finales.length > 0 && (
             <View style={styles.horasFinalesSection}>
               <Text style={styles.subsectionTitle}>Horas aprobadas finales</Text>
@@ -929,78 +1114,20 @@ export default function TareaDetalleScreen() {
         </TaskSection>
       )}
 
-      {/* Acciones para estado pendiente */}
-      {esPendiente && (
-        <TaskSection title="Acciones">
-          
-          {/* Asignar trabajadores */}
-          <View style={styles.primaryActionWithIcon}>
-            <Ionicons name="person-add-outline" size={22} color={HoffColors.primaryDark} />
-            <TaskPrimaryButton
-              label="Asignar trabajador"
-              onPress={handleAbrirAsignarModal}
+      {(esPendiente || esAsignada) && (
+        <TaskSection title="Acciones de la tarea">
+          <View style={styles.secondaryActionWithIcon}>
+            <Ionicons name="people-outline" size={22} color={HoffColors.textSecondary} />
+            <TaskSecondaryButton
+              label="Ir a Staff y horarios"
+              onPress={() => setAdminDetalleTab('staff')}
               style={styles.taskBtnFlex}
             />
           </View>
-
-          {/* Desasignar trabajadores (si hay asignados) */}
-          {tarea.trabajadores && tarea.trabajadores.length > 0 && (
-            <>
-              <Text style={styles.subsectionTitle}>Trabajadores asignados:</Text>
-              <Text style={styles.hoursHelp}>
-                Ajusta las horas por persona (como máximo la duración de la tarea) y pulsa Guardar.
-              </Text>
-              {tarea.trabajadores.map((trabajador: any) => (
-                <View key={trabajador.id} style={styles.trabajadorAsignadoBlock}>
-                  <View style={styles.trabajadorAsignadoHeader}>
-                    <View style={{ flex: 1, paddingRight: 8 }}>
-                      <View style={styles.workerNameRow}>
-                        <Ionicons name="construct-outline" size={18} color={HoffColors.primary} />
-                        <Text style={styles.trabajadorAsignadoNombre}>{trabajador.nombre}</Text>
-                      </View>
-                      <Text style={styles.trabajadorHoras}>
-                        {trabajador.horas_asignadas
-                          ? `Asignadas: ${decimalATiempo(parseFloat(trabajador.horas_asignadas))}`
-                          : tarea.numero_horas
-                            ? `Por defecto: ${decimalATiempo(tarea.numero_horas)}`
-                            : 'Sin horas en tarea'}
-                      </Text>
-                      <View style={styles.horasEdicionRow}>
-                        <TextInput
-                          style={styles.horasEdicionInput}
-                          value={horasTiempoPorTrabajador[trabajador.id] || '0:00'}
-                          onChangeText={(value) => updateHoras(trabajador.id, value)}
-                          keyboardType="default"
-                          placeholder="0:00"
-                        />
-                        <TouchableOpacity
-                          style={styles.guardarHorasButton}
-                          onPress={() => handleGuardarHorasAsignadas(trabajador.id)}
-                        >
-                          <Text style={styles.guardarHorasButtonText}>Guardar</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                    <TouchableOpacity
-                      style={styles.desasignarButton}
-                      onPress={() => handleDesasignarTrabajador(trabajador.id, trabajador.nombre)}
-                      accessibilityLabel="Desasignar trabajador"
-                    >
-                      <Ionicons name="close-outline" size={24} color={HoffColors.accentDark} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))}
-            </>
-          )}
-
-          {/* Editar tarea */}
           <View style={styles.secondaryActionWithIcon}>
             <Ionicons name="create-outline" size={22} color={HoffColors.textSecondary} />
             <TaskSecondaryButton label="Editar tarea" onPress={handleEditarTarea} style={styles.taskBtnFlex} />
           </View>
-
-          {/* Cancelar tarea */}
           <TouchableOpacity style={[styles.actionButton, styles.cancelButton]} onPress={handleCancelarTarea}>
             <View style={styles.destructiveRow}>
               <Ionicons name="close-circle-outline" size={20} color={HoffColors.accentDark} />
@@ -1010,88 +1137,179 @@ export default function TareaDetalleScreen() {
         </TaskSection>
       )}
 
-      {/* Acciones para estado asignada */}
-      {esAsignada && (
-        <TaskSection title="Acciones">
-          
-          {/* Asignar trabajadores adicionales */}
-          <View style={styles.primaryActionWithIcon}>
-            <Ionicons name="person-add-outline" size={22} color={HoffColors.primaryDark} />
-            <TaskPrimaryButton
-              label="Asignar trabajador"
-              onPress={handleAbrirAsignarModal}
-              style={styles.taskBtnFlex}
-            />
-          </View>
-
-          {/* Desasignar trabajadores */}
-          {tarea.trabajadores && tarea.trabajadores.length > 0 && (
-            <>
-              <Text style={styles.subsectionTitle}>Trabajadores asignados:</Text>
-              <Text style={styles.hoursHelp}>
-                Ajusta las horas por persona (como máximo la duración de la tarea) y pulsa Guardar.
-              </Text>
-              {tarea.trabajadores.map((trabajador: any) => (
-                <View key={trabajador.id} style={styles.trabajadorAsignadoBlock}>
-                  <View style={styles.trabajadorAsignadoHeader}>
-                    <View style={{ flex: 1, paddingRight: 8 }}>
-                      <View style={styles.workerNameRow}>
-                        <Ionicons name="construct-outline" size={18} color={HoffColors.primary} />
-                        <Text style={styles.trabajadorAsignadoNombre}>{trabajador.nombre}</Text>
-                      </View>
-                      <Text style={styles.trabajadorHoras}>
-                        {trabajador.horas_asignadas
-                          ? `Asignadas: ${decimalATiempo(parseFloat(trabajador.horas_asignadas))}`
-                          : tarea.numero_horas
-                            ? `Por defecto: ${decimalATiempo(tarea.numero_horas)}`
-                            : 'Sin horas en tarea'}
-                      </Text>
-                      <View style={styles.horasEdicionRow}>
-                        <TextInput
-                          style={styles.horasEdicionInput}
-                          value={horasTiempoPorTrabajador[trabajador.id] || '0:00'}
-                          onChangeText={(value) => updateHoras(trabajador.id, value)}
-                          keyboardType="default"
-                          placeholder="0:00"
-                        />
-                        <TouchableOpacity
-                          style={styles.guardarHorasButton}
-                          onPress={() => handleGuardarHorasAsignadas(trabajador.id)}
-                        >
-                          <Text style={styles.guardarHorasButtonText}>Guardar</Text>
-                        </TouchableOpacity>
-                      </View>
-                    </View>
-                    <TouchableOpacity
-                      style={styles.desasignarButton}
-                      onPress={() => handleDesasignarTrabajador(trabajador.id, trabajador.nombre)}
-                      accessibilityLabel="Desasignar trabajador"
-                    >
-                      <Ionicons name="close-outline" size={24} color={HoffColors.accentDark} />
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              ))}
-            </>
-          )}
-
-          {/* Editar tarea */}
-          <View style={styles.secondaryActionWithIcon}>
-            <Ionicons name="create-outline" size={22} color={HoffColors.textSecondary} />
-            <TaskSecondaryButton label="Editar tarea" onPress={handleEditarTarea} style={styles.taskBtnFlex} />
-          </View>
-
-          {/* Cancelar tarea */}
-          <TouchableOpacity style={[styles.actionButton, styles.cancelButton]} onPress={handleCancelarTarea}>
-            <View style={styles.destructiveRow}>
-              <Ionicons name="close-circle-outline" size={20} color={HoffColors.accentDark} />
-              <Text style={[styles.actionButtonText, styles.cancelButtonText]}>Cancelar tarea</Text>
-            </View>
-          </TouchableOpacity>
-        </TaskSection>
+      </>
       )}
 
-      {/* Modal confirmar desasignar trabajador */}
+      {adminDetalleTab === 'staff' && (
+        <>
+          {esPendiente || esAsignada ? (
+            <TaskSection title="Asignaciones y horarios">
+              <View style={styles.primaryActionWithIcon}>
+                <Ionicons name="person-add-outline" size={22} color={HoffColors.primaryDark} />
+                <TaskPrimaryButton
+                  label="Asignar staff"
+                  onPress={handleAbrirAsignarModal}
+                  style={styles.taskBtnFlex}
+                />
+              </View>
+
+              {tarea.trabajadores && tarea.trabajadores.length > 0 && (
+                <>
+                  <Text style={styles.subsectionTitle}>Staff asignado</Text>
+                  <Text style={styles.hoursHelp}>
+                    Edita horas e inicio por persona; un solo guardado envía ambos valores al servidor.
+                  </Text>
+                  {tarea.trabajadores.map((trabajador: any) => {
+                    const maxH =
+                      tarea.numero_horas != null && Number.isFinite(Number(tarea.numero_horas))
+                        ? Number(tarea.numero_horas)
+                        : null;
+                    const savingRow = savingHorasTrabajadorId === trabajador.id;
+                    return (
+                      <View key={trabajador.id} style={styles.staffAssignCard}>
+                        <View style={styles.staffAssignCardHeader}>
+                          <View style={styles.staffAssignCardTitleWrap}>
+                            <View style={styles.workerNameRow}>
+                              <Ionicons name="construct-outline" size={18} color={HoffColors.primary} />
+                              <Text style={styles.trabajadorAsignadoNombre}>{trabajador.nombre}</Text>
+                            </View>
+                          </View>
+                          <TouchableOpacity
+                            style={styles.desasignarButton}
+                            onPress={() => handleDesasignarTrabajador(trabajador.id, trabajador.nombre)}
+                            accessibilityLabel="Desasignar staff"
+                          >
+                            <Ionicons name="close-outline" size={24} color={HoffColors.accentDark} />
+                          </TouchableOpacity>
+                        </View>
+                        <Text style={styles.trabajadorHoras}>
+                          {trabajador.horas_asignadas
+                            ? `En servidor: ${decimalATiempo(parseFloat(trabajador.horas_asignadas))}`
+                            : tarea.numero_horas
+                              ? `En servidor (por defecto): ${decimalATiempo(tarea.numero_horas)}`
+                              : 'Sin horas definidas en la tarea'}
+                          {trabajador.hora_inicio ? ` · Inicio ${trabajador.hora_inicio}` : ''}
+                        </Text>
+                        <View style={styles.staffFormStack}>
+                          <Text style={styles.staffFieldLabel}>Horas asignadas</Text>
+                          {maxH != null ? (
+                            <Text style={styles.staffFieldHint}>Máximo: {decimalATiempo(maxH)}</Text>
+                          ) : null}
+                          <TouchableOpacity
+                            style={[styles.staffFieldTrigger, savingRow && styles.staffFieldTriggerDisabled]}
+                            onPress={() => openTimeWheel({ type: 'staffHoras', trabajadorId: trabajador.id })}
+                            disabled={savingRow}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Elegir horas asignadas para ${trabajador.nombre}`}
+                          >
+                            <Text style={styles.staffFieldTriggerText}>
+                              {horasTiempoPorTrabajador[trabajador.id] || '0:00'}
+                            </Text>
+                            <Ionicons name="time-outline" size={20} color={HoffColors.primary} />
+                          </TouchableOpacity>
+                          <Text style={[styles.staffFieldLabel, { marginTop: taskSpacing.sm }]}>
+                            Hora de inicio (opcional, 24 h)
+                          </Text>
+                          <TouchableOpacity
+                            style={[styles.staffFieldTrigger, savingRow && styles.staffFieldTriggerDisabled]}
+                            onPress={() => openTimeWheel({ type: 'staffInicio', trabajadorId: trabajador.id })}
+                            disabled={savingRow}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Elegir hora de inicio para ${trabajador.nombre}`}
+                          >
+                            <Text style={styles.staffFieldTriggerText}>
+                              {(horaInicioPorTrabajador[trabajador.id] || '').trim()
+                                ? horaInicioPorTrabajador[trabajador.id]
+                                : 'Sin hora'}
+                            </Text>
+                            <Ionicons name="chevron-forward" size={20} color={HoffColors.textSecondary} />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[
+                              styles.staffSaveButton,
+                              savingRow && styles.staffSaveButtonDisabled,
+                            ]}
+                            onPress={() => handleGuardarHorasAsignadas(trabajador.id)}
+                            disabled={savingRow}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Guardar horas y horario de ${trabajador.nombre}`}
+                          >
+                            {savingRow ? (
+                              <ActivityIndicator color={HoffColors.white} />
+                            ) : (
+                              <Text style={styles.staffSaveButtonText}>Guardar cambios</Text>
+                            )}
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </>
+              )}
+            </TaskSection>
+          ) : (
+            <TaskSection title="Staff y horarios">
+              <View style={[styles.infoBox, { backgroundColor: HoffColors.secondaryMuted }]}>
+                <View style={styles.infoBoxInner}>
+                  <Ionicons name="information-circle-outline" size={22} color={HoffColors.primary} />
+                  <Text style={[styles.infoBoxText, { color: HoffColors.primary }]}>
+                    En este estado no se pueden modificar asignaciones ni horarios desde aquí. Usa la pestaña
+                    Vista para consultar el resumen del staff.
+                  </Text>
+                </View>
+              </View>
+            </TaskSection>
+          )}
+        </>
+      )}
+
+      {/* Modal para devolver tarea */}
+      <Modal
+        visible={showDevolverModal}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowDevolverModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Devolver Tarea</Text>
+            <Text style={styles.modalSubtitle}>
+              Escribe un mensaje explicando qué falta o qué necesita corregirse:
+            </Text>
+
+            <TextInput
+              style={styles.mensajeInput}
+              placeholder="Ej: Falta subir imagen del baño, necesito ver foto del trabajo finalizado..."
+              multiline
+              numberOfLines={4}
+              value={mensajeRechazo}
+              onChangeText={setMensajeRechazo}
+              textAlignVertical="top"
+            />
+
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.modalCancelButton}
+                onPress={() => {
+                  setShowDevolverModal(false);
+                  setMensajeRechazo('');
+                }}
+              >
+                <Text style={styles.modalCancelText}>Cancelar</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.modalConfirmButton} onPress={confirmarDevolver}>
+                <View style={styles.modalConfirmInner}>
+                  <Ionicons name="arrow-undo-outline" size={18} color={HoffColors.white} />
+                  <Text style={styles.modalConfirmText}>Devolver</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal confirmar desasignar staff */}
       <Modal
         visible={showDesasignarModal && desasignarTarget != null}
         transparent
@@ -1103,7 +1321,7 @@ export default function TareaDetalleScreen() {
       >
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Desasignar trabajador</Text>
+            <Text style={styles.modalTitle}>Desasignar staff</Text>
             {desasignarTarget ? (
               <Text style={styles.modalSubtitle}>
                 ¿Seguro que quieres quitar a{' '}
@@ -1139,7 +1357,112 @@ export default function TareaDetalleScreen() {
         </View>
       </Modal>
 
-      {/* Modal para asignar trabajador */}
+      <ConfirmModal
+        visible={showCancelarConfirm}
+        title="¿Cancelar tarea?"
+        message={'Esta acción cambiará el estado de la tarea a "cancelada". ¿Estás seguro?'}
+        confirmText="Sí, cancelar"
+        cancelText="No"
+        destructive
+        loading={cancelando}
+        onCancel={() => {
+          if (cancelando) return;
+          setShowCancelarConfirm(false);
+        }}
+        onConfirm={confirmarCancelarTarea}
+      />
+
+      <ConfirmModal
+        visible={showAprobarConfirm}
+        title="¿Aprobar tarea?"
+        message={`Tiempo del servicio: ${getTiempoServicio()}h\n\n¿Confirmas que el trabajo se realizó correctamente? Esto creará un registro permanente.`}
+        confirmText="Aprobar"
+        cancelText="Cancelar"
+        loading={aprobando}
+        onCancel={() => {
+          if (aprobando) return;
+          setShowAprobarConfirm(false);
+        }}
+        onConfirm={confirmarAprobarTarea}
+      />
+      <InfoModal
+        visible={infoModal.visible}
+        title={infoModal.title}
+        message={infoModal.message}
+        variant={infoModal.variant}
+        onPrimary={closeInfoModal}
+      />
+
+      <Modal
+        visible={timeWheelTarget !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={cerrarTimeWheel}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, styles.timeWheelModalContent]}>
+            {timeWheelTarget ? (
+              <>
+                <Text style={styles.modalTitle}>
+                  {timeWheelTarget.type === 'staffHoras' && 'Horas asignadas'}
+                  {timeWheelTarget.type === 'staffInicio' && 'Hora de inicio'}
+                  {timeWheelTarget.type === 'asignarHoras' && 'Horas asignadas'}
+                  {timeWheelTarget.type === 'asignarInicio' && 'Hora de inicio'}
+                  {timeWheelTarget.type === 'aprobarHoras' && 'Horas del servicio'}
+                </Text>
+                <Text style={styles.modalDraftHint}>
+                  Desliza las columnas hasta centrar el valor; pulsa Aplicar para confirmar.
+                </Text>
+                <TimePicker
+                  key={timeWheelKey}
+                  horas={timeWheelH}
+                  minutos={timeWheelM}
+                  onHorasChange={(h) => setTimeWheelH(h)}
+                  onMinutosChange={(m) => setTimeWheelM(m)}
+                  maxHoras={
+                    timeWheelTarget.type === 'staffInicio' ||
+                    timeWheelTarget.type === 'asignarInicio'
+                      ? 23
+                      : maxMinutosDuracionTarea != null
+                        ? Math.floor(maxMinutosDuracionTarea / 60)
+                        : undefined
+                  }
+                  maxMinutos={
+                    timeWheelTarget.type === 'staffInicio' ||
+                    timeWheelTarget.type === 'asignarInicio'
+                      ? 59
+                      : maxMinutosDuracionTarea != null
+                        ? maxMinutosDuracionTarea % 60
+                        : undefined
+                  }
+                  size="large"
+                />
+                {(timeWheelTarget.type === 'staffInicio' ||
+                  timeWheelTarget.type === 'asignarInicio') && (
+                  <TouchableOpacity
+                    style={styles.timeWheelClearButton}
+                    onPress={quitarHoraInicioWheel}
+                    accessibilityRole="button"
+                    accessibilityLabel="Quitar hora de inicio"
+                  >
+                    <Text style={styles.timeWheelClearButtonText}>Quitar hora de inicio</Text>
+                  </TouchableOpacity>
+                )}
+                <View style={styles.modalButtons}>
+                  <TouchableOpacity style={styles.modalCancelButton} onPress={cerrarTimeWheel}>
+                    <Text style={styles.modalCancelText}>Cancelar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.modalConfirmButton} onPress={aplicarTimeWheel}>
+                    <Text style={styles.modalConfirmText}>Aplicar</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Modal para asignar staff */}
       <Modal
         visible={showAsignarModal}
         transparent={true}
@@ -1149,62 +1472,97 @@ export default function TareaDetalleScreen() {
           setShowAsignarModal(false);
           setTrabajadorSeleccionado(null);
           setHorasAsignar('0:00');
+          setHoraInicioAsignar('');
         }}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Asignar Trabajador</Text>
-            <Text style={styles.modalDraftHint}>
-              Elige trabajador y horas aquí; los cambios se envían al servidor al pulsar Guardar. Cancelar cierra sin guardar.
-            </Text>
-
-            {loadingTrabajadores ? (
-              <ActivityIndicator size="large" color={HoffColors.primary} style={{ marginVertical: 20 }} />
-            ) : trabajadores.length === 0 ? (
-              <Text style={styles.modalSubtitle}>
-                No hay trabajadores disponibles para asignar
+        <KeyboardAvoidingView
+          style={styles.modalKeyboardRoot}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 56 : 0}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Asignar staff</Text>
+              <Text style={styles.modalDraftHint}>
+                Elige al staff y las horas aquí; los cambios se envían al servidor al pulsar Guardar. Cancelar cierra sin guardar.
               </Text>
-            ) : (
-              <>
-                <Text style={styles.modalSubtitle}>Selecciona un trabajador:</Text>
-                <ScrollView style={styles.trabajadoresList}>
-                  {trabajadores.map((trabajador: any) => (
-                    <TouchableOpacity
-                      key={trabajador.id}
-                      style={[
-                        styles.trabajadorOption,
-                        trabajadorSeleccionado === trabajador.id && styles.trabajadorOptionSelected
-                      ]}
-                      onPress={() => setTrabajadorSeleccionado(trabajador.id)}
-                    >
-                      <Text style={styles.trabajadorOptionText}>{trabajador.nombre}</Text>
-                      {trabajadorSeleccionado === trabajador.id && (
-                        <Text style={styles.checkmark}>✓</Text>
-                      )}
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
 
-                <Text style={styles.modalLabel}>Horas asignadas (opcional):</Text>
-                <TextInput
-                  style={styles.hoursInput}
-                  value={horasAsignar}
-                  onChangeText={(text) => {
-                    const filtered = text.replace(/[^0-9:]/g, '');
-                    if (validarFormatoTiempo(filtered) || filtered === '') {
-                      setHorasAsignar(filtered || '0:00');
-                    }
-                  }}
-                  placeholder="0:00"
-                  keyboardType="default"
-                />
-                <Text style={styles.helpText}>
-                  Por defecto se usa la duración de la tarea para este trabajador. Puedes indicar menos horas si aplica (nunca más que la duración).
+              {loadingTrabajadores ? (
+                <ActivityIndicator size="large" color={HoffColors.primary} style={{ marginVertical: 20 }} />
+              ) : trabajadores.length === 0 ? (
+                <Text style={styles.modalSubtitle}>
+                  No hay staff disponible para asignar
                 </Text>
-              </>
-            )}
-            
-            <View style={styles.modalButtons}>
+              ) : (
+                <ScrollView
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator={false}
+                  style={styles.asignarStaffScroll}
+                >
+                  <Text style={styles.modalSubtitle}>Selecciona al staff</Text>
+                  <View style={styles.trabajadoresListStatic}>
+                    {trabajadores.map((trabajador: any) => (
+                      <TouchableOpacity
+                        key={trabajador.id}
+                        style={[
+                          styles.trabajadorOption,
+                          trabajadorSeleccionado === trabajador.id && styles.trabajadorOptionSelected,
+                        ]}
+                        onPress={() => setTrabajadorSeleccionado(trabajador.id)}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected: trabajadorSeleccionado === trabajador.id }}
+                      >
+                        <Text style={styles.trabajadorOptionText}>{trabajador.nombre}</Text>
+                        {trabajadorSeleccionado === trabajador.id && (
+                          <Text style={styles.checkmark}>✓</Text>
+                        )}
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+
+                  <View style={styles.staffModalFormBlock}>
+                    <Text style={styles.staffFieldLabel}>Horas asignadas</Text>
+                    {tarea?.numero_horas != null && Number.isFinite(Number(tarea.numero_horas)) ? (
+                      <Text style={styles.staffFieldHint}>
+                        Máximo: {decimalATiempo(Number(tarea.numero_horas))} (por defecto se usa la duración de la tarea)
+                      </Text>
+                    ) : (
+                      <Text style={styles.staffFieldHint}>
+                        Por defecto se usa la duración de la tarea si no cambias el valor.
+                      </Text>
+                    )}
+                    <TouchableOpacity
+                      style={styles.staffFieldTrigger}
+                      onPress={() => openTimeWheel({ type: 'asignarHoras' })}
+                      accessibilityRole="button"
+                      accessibilityLabel="Elegir horas asignadas al nuevo miembro del staff"
+                    >
+                      <Text style={styles.staffFieldTriggerText}>{horasAsignar}</Text>
+                      <Ionicons name="time-outline" size={20} color={HoffColors.primary} />
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.staffModalFormBlock}>
+                    <Text style={styles.staffFieldLabel}>Hora de inicio (opcional, 24 h)</Text>
+                    <Text style={styles.staffFieldHint}>
+                      Hora local en la ubicación; déjalo vacío si no aplica.
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.staffFieldTrigger}
+                      onPress={() => openTimeWheel({ type: 'asignarInicio' })}
+                      accessibilityRole="button"
+                      accessibilityLabel="Elegir hora de inicio para el nuevo miembro del staff"
+                    >
+                      <Text style={styles.staffFieldTriggerText}>
+                        {horaInicioAsignar.trim() ? horaInicioAsignar : 'Sin hora'}
+                      </Text>
+                      <Ionicons name="chevron-forward" size={20} color={HoffColors.textSecondary} />
+                    </TouchableOpacity>
+                  </View>
+                </ScrollView>
+              )}
+
+              <View style={styles.modalButtons}>
               <TouchableOpacity 
                 style={[styles.modalCancelButton, savingAsignacion && styles.modalConfirmButtonDisabled]} 
                 onPress={() => {
@@ -1212,6 +1570,7 @@ export default function TareaDetalleScreen() {
                   setShowAsignarModal(false);
                   setTrabajadorSeleccionado(null);
                   setHorasAsignar('0:00');
+                  setHoraInicioAsignar('');
                 }}
                 disabled={savingAsignacion}
               >
@@ -1234,9 +1593,10 @@ export default function TareaDetalleScreen() {
                   )}
                 </TouchableOpacity>
               )}
+              </View>
             </View>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </ScrollView>
     </TaskScreenContainer>
@@ -1250,6 +1610,9 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingBottom: taskSpacing.xl,
+  },
+  adminDetalleTabBar: {
+    marginBottom: taskSpacing.md,
   },
   loadingContainer: {
     flex: 1,
@@ -1348,6 +1711,17 @@ const styles = StyleSheet.create({
   financeValue: {
     fontSize: 16,
     fontWeight: 'bold',
+    color: HoffColors.primary,
+  },
+  linkButton: {
+    marginTop: taskSpacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  linkButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
     color: HoffColors.primary,
   },
   clientName: {
@@ -1674,6 +2048,9 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontStyle: 'italic',
   },
+  modalKeyboardRoot: {
+    flex: 1,
+  },
   modalOverlay: {
     position: 'absolute',
     top: 0,
@@ -1684,6 +2061,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 1000,
+  },
+  asignarStaffScroll: {
+    maxHeight: 440,
+    marginBottom: taskSpacing.sm,
+  },
+  trabajadoresListStatic: {
+    marginBottom: taskSpacing.sm,
+  },
+  staffModalFormBlock: {
+    marginTop: taskSpacing.md,
+    paddingTop: taskSpacing.md,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#e0e0e0',
   },
   modalContent: {
     backgroundColor: HoffColors.surface,
@@ -1972,6 +2362,107 @@ const styles = StyleSheet.create({
     color: HoffColors.primary,
     fontWeight: 'normal',
     marginTop: 4,
+  },
+  staffAssignCard: {
+    backgroundColor: HoffColors.surface,
+    borderRadius: 12,
+    padding: taskSpacing.md,
+    marginBottom: taskSpacing.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#e6e6e6',
+    shadowColor: HoffColors.primaryDark,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  staffAssignCardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  staffAssignCardTitleWrap: {
+    flex: 1,
+    paddingRight: 8,
+  },
+  staffFormStack: {
+    marginTop: taskSpacing.sm,
+  },
+  staffFieldLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: HoffColors.textSecondary,
+    marginBottom: 4,
+  },
+  staffFieldHint: {
+    fontSize: 12,
+    color: HoffColors.textSecondary,
+    marginBottom: taskSpacing.xs,
+  },
+  staffFieldInput: {
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    fontSize: 15,
+    color: HoffColors.text,
+    backgroundColor: HoffColors.white,
+  },
+  staffFieldTrigger: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: HoffColors.white,
+    minHeight: 44,
+  },
+  staffFieldTriggerDisabled: {
+    opacity: 0.55,
+  },
+  staffFieldTriggerText: {
+    fontSize: 15,
+    color: HoffColors.text,
+    flex: 1,
+    marginRight: 8,
+  },
+  timeWheelModalContent: {
+    maxWidth: 420,
+  },
+  timeWheelClearButton: {
+    marginTop: taskSpacing.md,
+    alignSelf: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  timeWheelClearButtonText: {
+    fontSize: 14,
+    color: HoffColors.accentDark,
+    fontWeight: '600',
+  },
+  staffSaveButton: {
+    marginTop: taskSpacing.md,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: HoffColors.primary,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+    width: '100%',
+  },
+  staffSaveButtonDisabled: {
+    opacity: 0.65,
+  },
+  staffSaveButtonText: {
+    color: HoffColors.white,
+    fontSize: 15,
+    fontWeight: '600',
   },
   desasignarButton: {
     padding: 8,

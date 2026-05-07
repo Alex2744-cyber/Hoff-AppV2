@@ -9,6 +9,8 @@ import {
   TouchableOpacity,
   ScrollView,
   useWindowDimensions,
+  Alert,
+  Share,
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native';
@@ -64,6 +66,22 @@ export function TaskEvidenceViewer({
     setViewerOpen(true);
   };
 
+  const handleShareCurrent = async () => {
+    const uri = imageUris[index];
+    if (!uri) {
+      Alert.alert('Error', 'No hay imagen para compartir');
+      return;
+    }
+    try {
+      await Share.share({
+        message: uri,
+        url: uri,
+      });
+    } catch {
+      Alert.alert('Error', 'No se pudo compartir la imagen');
+    }
+  };
+
   const content = (
     <View>
       <ScrollView
@@ -100,13 +118,22 @@ export function TaskEvidenceViewer({
               <Text style={styles.viewerCounter}>
                 {index + 1} / {imageUris.length}
               </Text>
-              <TouchableOpacity
-                onPress={() => setViewerOpen(false)}
-                style={styles.closeBtn}
-                accessibilityLabel="Cerrar visor"
-              >
-                <Ionicons name="close" size={28} color={HoffColors.white} />
-              </TouchableOpacity>
+              <View style={styles.headerActions}>
+                <TouchableOpacity
+                  onPress={handleShareCurrent}
+                  style={styles.actionBtn}
+                  accessibilityLabel="Compartir evidencia actual"
+                >
+                  <Ionicons name="share-social-outline" size={24} color={HoffColors.white} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => setViewerOpen(false)}
+                  style={styles.actionBtn}
+                  accessibilityLabel="Cerrar visor"
+                >
+                  <Ionicons name="close" size={28} color={HoffColors.white} />
+                </TouchableOpacity>
+              </View>
             </View>
             <ScrollView
               ref={scrollRef}
@@ -183,6 +210,14 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   closeBtn: {
+    padding: 8,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: taskSpacing.xs,
+  },
+  actionBtn: {
     padding: 8,
   },
   slide: {
